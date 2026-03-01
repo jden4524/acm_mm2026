@@ -26,7 +26,7 @@ train:
   grad_accum_steps: 1
   mixed_precision: bf16
   log_every: 20
-  save_every: 4000
+  save_every: 1000
   wandb_enabled: true
   wandb_project: attn_ft
   wandb_entity:

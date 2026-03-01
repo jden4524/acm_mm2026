@@ -39,30 +39,12 @@ def load_and_save(adapter_path, output_path):
     processor.save_pretrained(checkpoint_dir)
     return checkpoint_name, checkpoint_dir
     
-    
-def write_eval_json(checkpoint_name, checkpoint_dir):
-    eval_config = {
-        "model": {
-            checkpoint_name: {
-                "class": "Qwen3VLChat",
-                "model_path": checkpoint_dir,
-                "use_custom_prompt": True,
-                "max_new_tokens": 1024,
-                "use_vllm": True,
-                "temperature": 0.7,
-                "repetition_penalty": 1.0,
-                "presence_penalty": 1.5,
-                "top_p": 0.8,
-                "top_k": 20,
-                "min_pixels":256 * 28 * 28,
-                "max_pixels":1280 * 28 * 28,
-            }
-        },
-        "data": {
-            # "MMBench_DEV_EN_V11": {
-            #     "class": "ImageMCQDataset",
-            #     "dataset": "MMBench_DEV_EN_V11"
-            # },
+
+data_mapping = {
+            "MMBench_DEV_EN_V11": {
+                "class": "ImageMCQDataset",
+                "dataset": "MMBench_DEV_EN_V11"
+            },
             "MMVP": {
                 "class": "ImageMCQDataset",
                 "dataset": "MMVP"
@@ -102,18 +84,33 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
             "GQA_TestDev_Balanced": {
                 "class": "ImageVQADataset",
                 "dataset": "GQA_TestDev_Balanced"
-            },
-            "MM_NIAH_VAL": {
-                "class": "ImageVQADataset",
-                "dataset": "MM_NIAH_VAL"
-            },
-            "MM_NIAH_TEST": {
-                "class": "ImageVQADataset",
-                "dataset": "MM_NIAH_TEST"
-            },
-        },
+            }
+}
+
+
+def write_eval_json(checkpoint_name, checkpoint_dir):
+    eval_config = {
+        "model": {
+            checkpoint_name: {
+                "class": "Qwen3VLChat",
+                "model_path": checkpoint_dir,
+                "use_custom_prompt": True,
+                "max_new_tokens": 1024,
+                "use_vllm": True,
+                "temperature": 0.7,
+                "repetition_penalty": 1.0,
+                "presence_penalty": 1.5,
+                "top_p": 0.8,
+                "top_k": 20,
+                "min_pixels":256 * 28 * 28,
+                "max_pixels":1280 * 28 * 28,
+            }
+        }
     }
-    
+
+    fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME",  "POPE"]
+
+    eval_config["data"] = {k: v for k, v in data_mapping.items() if k in fast_subset}
     
     with open("eval_config.json", "w") as f:
         json.dump(eval_config, f, indent=2)
