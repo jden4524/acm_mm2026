@@ -39,7 +39,7 @@ class AttnHookManager:
     def _hook_fn(self, layer_idx: int):
         """Internal hook to capture the second element of the layer output."""
         def hook(module, input, output):
-            if isinstance(output, tuple) and len(output) > 1:
+            if isinstance(output, tuple) and len(output) == 3 and output[2] is not None:
                 self.attentions[layer_idx] = output[2]
         return hook
 

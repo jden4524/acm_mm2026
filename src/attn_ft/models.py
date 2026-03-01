@@ -4,6 +4,13 @@ from typing import Any, Dict, Optional, Tuple
 
 import torch
 from peft import LoraConfig, get_peft_model
+import sys
+import attn_ft.modeling_qwen3_vl # Your modified file
+
+# Tell Python that 'heavy_lib.utils' is actually your local version
+sys.modules['transformers.models.qwen3_vl.modeling_qwen3_vl'] = attn_ft.modeling_qwen3_vl
+
+import transformers
 from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 
 from attn_ft.attn_hooks import AttnHookManager
