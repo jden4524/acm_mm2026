@@ -47,35 +47,69 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
                 "class": "Qwen3VLChat",
                 "model_path": checkpoint_dir,
                 "use_custom_prompt": True,
-                "max_new_tokens": 512,
+                "max_new_tokens": 1024,
                 "use_vllm": True,
                 "temperature": 0.7,
                 "repetition_penalty": 1.0,
                 "presence_penalty": 1.5,
                 "top_p": 0.8,
-                "top_k": 20
+                "top_k": 20,
+                "min_pixels":256 * 28 * 28,
+                "max_pixels":1280 * 28 * 28,
             }
         },
         "data": {
-            "MMBench_DEV_EN_V11": {
-                "class": "ImageMCQDataset",
-                "dataset": "MMBench_DEV_EN_V11"
-            },
-            "MMMU_DEV_VAL": {
-                "class": "ImageMCQDataset",
-                "dataset": "MMMU_DEV_VAL"
-            },
-            # "OCRBench": {
-            #     "class": "OCRBench",
-            #     "dataset": "OCRBench"
+            # "MMBench_DEV_EN_V11": {
+            #     "class": "ImageMCQDataset",
+            #     "dataset": "MMBench_DEV_EN_V11"
             # },
-            "ScienceQA_TEST": {
+            "MMVP": {
                 "class": "ImageMCQDataset",
-                "dataset": "ScienceQA_TEST"
+                "dataset": "MMVP"
             },
-            "SEEDBench_IMG": {
+            "BLINK": {
                 "class": "ImageMCQDataset",
-                "dataset": "SEEDBench_IMG"
+                "dataset": "BLINK"
+            },
+            "VStarBench": {
+                "class": "ImageMCQDataset",
+                "dataset": "VStarBench"
+            },
+            "NaturalBenchDataset": {
+                "class": "ImageMCQDataset",
+                "dataset": "NaturalBenchDataset"
+            },
+            "VisOnlyQA-VLMEvalKit": {
+                "class": "ImageMCQDataset",
+                "dataset": "VisOnlyQA-VLMEvalKit"
+            },
+            "MME": {
+            "class": "ImageYORNDataset",
+            "dataset": "MME"
+            },
+            "HallusionBench": {
+            "class": "ImageYORNDataset",
+            "dataset": "HallusionBench"
+            },
+            "POPE": {
+            "class": "ImageYORNDataset",
+            "dataset": "POPE"
+            },
+            "AMBER": {
+            "class": "ImageYORNDataset",
+            "dataset": "AMBER"
+            },
+            "GQA_TestDev_Balanced": {
+                "class": "ImageVQADataset",
+                "dataset": "GQA_TestDev_Balanced"
+            },
+            "MM_NIAH_VAL": {
+                "class": "ImageVQADataset",
+                "dataset": "MM_NIAH_VAL"
+            },
+            "MM_NIAH_TEST": {
+                "class": "ImageVQADataset",
+                "dataset": "MM_NIAH_TEST"
             },
         },
     }

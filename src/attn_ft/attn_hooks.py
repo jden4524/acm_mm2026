@@ -40,7 +40,7 @@ class AttnHookManager:
         """Internal hook to capture the second element of the layer output."""
         def hook(module, input, output):
             if isinstance(output, tuple) and len(output) > 1:
-                self.attentions[layer_idx] = output[1]
+                self.attentions[layer_idx] = output[2]
         return hook
 
     def attach(self, model: torch.nn.Module):

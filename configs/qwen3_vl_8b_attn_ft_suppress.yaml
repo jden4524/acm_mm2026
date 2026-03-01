@@ -7,15 +7,15 @@ model:
   load_in_4bit: false
   lora_r: 8
   lora_alpha: 32
-  lora_dropout: 0.05
+  lora_dropout: 0.1
   lora_target_modules: [q_proj, k_proj,visual.merger.linear_fc2]
   attention_layers: []
   attention_heads: []
 
 train:
-  output_dir: checkpoints/qwen3_vl_8b_attn_ft_vacuum
-  loss: vacuum
-  loss_weight: 0.8
+  output_dir: checkpoints/qwen3_vl_8b_attn_ft_suppress
+  loss: suppress
+  loss_weight: 1
   seed: 42
   batch_size: 16
   num_epochs: 1

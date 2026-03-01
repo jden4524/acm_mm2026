@@ -97,8 +97,6 @@ def train(config_path: str) -> None:
         accelerator.print(f"trainable parameters: {trainable_params}")
     optimizer = AdamW(trainable, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
 
-
-
     model, optimizer, dataloader = accelerator.prepare(
         model, optimizer, dataloader
     )
@@ -118,6 +116,9 @@ def train(config_path: str) -> None:
     elif cfg.train.loss == "vacuum":
         attn_align_loss = vacuum_loss
         accelerator.print("Using vacuum loss for attention alignment")
+    elif cfg.train.loss == "suppress":
+        attn_align_loss = soft_suppression_loss
+        accelerator.print("Using soft suppression loss for attention alignment")
     else:
         raise ValueError(f"Unsupported loss type: {cfg.train.loss}")
 
@@ -149,7 +150,10 @@ def train(config_path: str) -> None:
 
                 lm_loss_total += outputs.loss.item()
                 attn_loss_total += align_loss_item * cfg.train.loss_weight
-                
+                # accelerator.print(
+                #     f"step={step} lm_loss={outputs.loss.item():.4f} "
+                #     f"attn_align_loss={align_loss_item:.4f} "
+                # )
                 loss = align_loss * cfg.train.loss_weight + outputs.loss
 
                 attn_manager.clear()
@@ -166,11 +170,6 @@ def train(config_path: str) -> None:
                         avg_lm_loss = lm_loss_total / cfg.train.log_every
                         avg_attn_loss = attn_loss_total / cfg.train.log_every
                         avg_total_loss = avg_lm_loss + avg_attn_loss
-                        # accelerator.print(
-                        #     f"step={step} lm_loss={avg_lm_loss:.4f} "
-                        #     f"attn_align_loss={avg_attn_loss:.4f} "
-                        #     f"(after applying loss weight {cfg.train.loss_weight:.4f})"
-                        # )
                         if wandb_run is not None:
                             accelerator.log({
                                 "lm_loss": avg_lm_loss,
