@@ -9,25 +9,26 @@ model:
   lora_alpha: 32
   lora_dropout: 0.1
   lora_target_modules: [q_proj, k_proj,visual.merger.linear_fc2]
-  attention_layers: []
+  attention_layers: 
+    -2: 0.4
+    -4: 0.2
+    -6: 0.2
+    -8: 0.2
   attention_heads: []
 
 train:
-  output_dir: checkpoints/qwen3_vl_8b_attn_ft_suppress
+  run_name: qwen3_vl_8b_attn_ft_bsz64_4l_suppress
   loss: suppress
   loss_weight: 1
   seed: 42
-  batch_size: 16
+  micro_batch_size: 16
+  effective_batch_size: 64
   num_epochs: 1
-  max_steps: 16000
   lr: 1.0e-4
   weight_decay: 0.01
-  warmup_steps: 200
-  grad_accum_steps: 1
+  warmup_steps: 100
   mixed_precision: bf16
-  log_every: 20
+  log_every: 10
   save_every: 1000
   wandb_enabled: true
   wandb_project: attn_ft
-  wandb_entity:
-  wandb_run_name:

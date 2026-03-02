@@ -26,23 +26,22 @@ class ModelConfig:
     lora_alpha: int
     lora_dropout: float
     lora_target_modules: List[str]
-    attention_layers: List[int]
+    attention_layers: Dict[int, float]
     attention_heads: List[int]
 
 
 @dataclass
 class TrainConfig:
-    output_dir: str
+    run_name: str
     loss: str
     loss_weight: float
     seed: int
-    batch_size: int
+    micro_batch_size: int
+    effective_batch_size: int
     num_epochs: int
-    max_steps: int
     lr: float
     weight_decay: float
     warmup_steps: int
-    grad_accum_steps: int
     mixed_precision: str
     log_every: int
     save_every: int
@@ -82,22 +81,21 @@ def load_config(path: str | Path) -> Config:
         lora_alpha=model.get("lora_alpha", 16),
         lora_dropout=model.get("lora_dropout", 0.05),
         lora_target_modules=model.get("lora_target_modules", []),
-        attention_layers=model.get("attention_layers", []),
+        attention_layers=model.get("attention_layers", {-2:1.0}),
         attention_heads=model.get("attention_heads", []),
     )
 
     train_cfg = TrainConfig(
-        output_dir=train.get("output_dir", "outputs"),
+        run_name=train.get("run_name"),
         loss=train.get("loss", "ce"),
         loss_weight=train.get("loss_weight", 1.0),
         seed=train.get("seed", 42),
-        batch_size=train.get("batch_size", 1),
+        micro_batch_size=train.get("micro_batch_size", 1),
+        effective_batch_size=train.get("effective_batch_size", 4),
         num_epochs=train.get("num_epochs", 1),
-        max_steps=train.get("max_steps", 1000),
         lr=train.get("lr", 1.0e-4),
         weight_decay=train.get("weight_decay", 0.0),
         warmup_steps=train.get("warmup_steps", 0),
-        grad_accum_steps=train.get("grad_accum_steps", 1),
         mixed_precision=train.get("mixed_precision", "no"),
         log_every=train.get("log_every", 10),
         save_every=train.get("save_every", 500),

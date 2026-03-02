@@ -3,10 +3,14 @@ import torch.nn.functional as F
 import torch
 
 
-def ce_loss(pred: list[torch.Tensor], target: list[torch.Tensor], eps: float = 1.0e-6) -> torch.Tensor:
+def ce_loss(
+    pred: list[torch.Tensor],
+    target: list[torch.Tensor],
+    eps: float = 1.0e-6,
+) -> torch.Tensor | tuple[torch.Tensor, int]:
     losses = []
     if len(pred) == 0 or len(target) == 0:
-        return 0
+        return torch.tensor(0.0)
     
     for p, t in zip(pred, target):
         if t is not None and p is not None:
@@ -22,11 +26,18 @@ def ce_loss(pred: list[torch.Tensor], target: list[torch.Tensor], eps: float = 1
             losses.append(loss)
     
     if len(losses) == 0:
-        return 0
-    return torch.stack(losses).mean()
+        return torch.tensor(0.0)
+
+    loss_stack = torch.stack(losses)
+    return loss_stack.mean()
 
 
-def vacuum_loss(pred: list[torch.Tensor], target: list[torch.Tensor], tau=1.0):
+def vacuum_loss(
+    pred: list[torch.Tensor],
+    target: list[torch.Tensor],
+    tau: float = 1.0,
+    return_stats: bool = False,
+) -> torch.Tensor | tuple[torch.Tensor, int]:
     losses = []
     if len(pred) == 0 or len(target) == 0:
         return 0
@@ -45,11 +56,16 @@ def vacuum_loss(pred: list[torch.Tensor], target: list[torch.Tensor], tau=1.0):
             losses.append(loss)
     
     if len(losses) == 0:
-        return 0
-    return torch.stack(losses).mean()
+        return torch.tensor(0.0)
+
+    loss_stack = torch.stack(losses)
+    return loss_stack.mean()
 
 
-def soft_suppression_loss(pred: list[torch.Tensor], target: list[torch.Tensor]):
+def soft_suppression_loss(
+    pred: list[torch.Tensor],
+    target: list[torch.Tensor],
+) -> torch.Tensor | tuple[torch.Tensor, int]:
     losses = []
     if len(pred) == 0 or len(target) == 0:
         return 0
@@ -68,5 +84,7 @@ def soft_suppression_loss(pred: list[torch.Tensor], target: list[torch.Tensor]):
             losses.append(loss)
     
     if len(losses) == 0:
-        return 0
-    return torch.stack(losses).mean()
+        return torch.tensor(0.0)
+
+    loss_stack = torch.stack(losses)
+    return loss_stack.mean()

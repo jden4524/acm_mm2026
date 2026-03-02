@@ -4,10 +4,12 @@ import argparse
 import json
 from pathlib import Path
 import queue
+from typing import Iterator
 from huggingface_hub import HfApi
 import shutil
 import threading
 import torch
+import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim import AdamW
 from datasets import load_dataset
@@ -19,7 +21,7 @@ import os
 from attn_ft.attn_hooks import AttnHookManager, extract_t2i_attn
 from attn_ft.config import load_config
 from attn_ft.data import AttnSupervisionCollator
-from attn_ft.losses import *
+from attn_ft.losses import ce_loss, soft_suppression_loss, vacuum_loss
 from attn_ft.models import (
     filter_trainable_parameters,
     load_model_and_processor
@@ -30,10 +32,8 @@ def train(config_path: str) -> None:
     cfg = load_config(config_path)
     wandb_run = "wandb" if cfg.train.wandb_enabled else None
     
-    DESIRED_EBS = 16
-    BATCH_SIZE_PER_GPU = cfg.train.batch_size 
     NUM_GPUS = int(os.environ.get("WORLD_SIZE", 1))
-    cfg.train.grad_accum_steps = DESIRED_EBS // (BATCH_SIZE_PER_GPU * NUM_GPUS)
+    cfg.train.grad_accum_steps = cfg.train.effective_batch_size // (cfg.train.micro_batch_size  * NUM_GPUS)
 
     accelerator = Accelerator(
         mixed_precision=cfg.train.mixed_precision,
@@ -46,11 +46,14 @@ def train(config_path: str) -> None:
     if cfg.train.wandb_enabled:
         wandb_kwargs = {
             "project_name": cfg.train.wandb_project,
+            "init_kwargs": {
+                "wandb": {"name": cfg.train.run_name}
+            },
             "config": {
                 "loss": cfg.train.loss,
                 "loss_weight": cfg.train.loss_weight,
-                "batch_size": cfg.train.batch_size,
-                "max_steps": cfg.train.max_steps,
+                "micro_batch_size": cfg.train.micro_batch_size,
+                "effective_batch_size": cfg.train.effective_batch_size,
                 "lr": cfg.train.lr,
                 "weight_decay": cfg.train.weight_decay,
                 "warmup_steps": cfg.train.warmup_steps,
@@ -58,10 +61,6 @@ def train(config_path: str) -> None:
                 "model": cfg.model.name,
             },
         }
-        if cfg.train.wandb_entity:
-            wandb_kwargs["entity"] = cfg.train.wandb_entity
-        if cfg.train.wandb_run_name:
-            wandb_kwargs["name"] = cfg.train.wandb_run_name
         accelerator.init_trackers(**wandb_kwargs)
 
     model, processor = load_model_and_processor(
@@ -83,7 +82,7 @@ def train(config_path: str) -> None:
 
     dataloader = DataLoader(
         dataset,
-        batch_size=cfg.train.batch_size,
+        batch_size=cfg.train.micro_batch_size,
         shuffle=True,
         collate_fn=collator,
     )
@@ -106,7 +105,7 @@ def train(config_path: str) -> None:
         optimizer,
         num_warmup_steps=cfg.train.warmup_steps,
         num_training_steps=total_training_steps,
-        num_cycles=3
+        num_cycles=2
     )
     scheduler = accelerator.prepare(scheduler)
     
@@ -122,6 +121,29 @@ def train(config_path: str) -> None:
     else:
         raise ValueError(f"Unsupported loss type: {cfg.train.loss}")
 
+    target_attn_layer = cfg.model.attention_layers
+    accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
+
+    def build_accum_window(data_iterator: Iterator):
+        micro_batches = []
+        for _ in range(cfg.train.grad_accum_steps):
+            try:
+                micro_batches.append(next(data_iterator))
+            except StopIteration:
+                break
+
+        local_tokens = 0
+        local_attn_units = 0
+        for mb in micro_batches:
+            local_tokens += (mb.labels[:, 1:] != -100).sum().item()
+            local_attn_units += sum(
+                1
+                for token_span, mask in zip(mb.token_spans, mb.masks)
+                if token_span is not None and mask is not None
+            )
+
+        return micro_batches, local_tokens, local_attn_units
+
     model.train()
     step = 0
     progress = tqdm(
@@ -129,67 +151,124 @@ def train(config_path: str) -> None:
         disable=not accelerator.is_main_process,
         desc="train",
     )
+    log_steps = 0
+    lm_metric_total = 0.0
+    attn_metric_total = 0.0
+    total_metric_total = 0.0
     for epoch in range(cfg.train.num_epochs):
-        lm_loss_total = 0.0
-        attn_loss_total = 0.0
-        
-        for batch in dataloader:
+        data_iter = iter(dataloader)
+        while True:
             if step >= total_training_steps:
                 break
 
-            with accelerator.accumulate(model):
-                batch.inputs.to(accelerator.device)
-                labels = batch.labels.to(accelerator.device)
-                outputs = model(**batch.inputs, labels=labels)
-                all_maps = attn_manager.get_attentions()
-                attn_map = all_maps[-2]
-                phrase_attn = extract_t2i_attn(attn_map, batch, processor)  # list[Tensor(head, #of text tok, L)]
+            micro_batches, local_tokens, local_attn_units = build_accum_window(data_iter)
 
-                align_loss = attn_align_loss(phrase_attn, batch.masks)
-                align_loss_item = align_loss.item() if isinstance(align_loss, torch.Tensor) else align_loss
+            if len(micro_batches) == 0:
+                break
 
-                lm_loss_total += outputs.loss.item()
-                attn_loss_total += align_loss_item * cfg.train.loss_weight
-                # accelerator.print(
-                #     f"step={step} lm_loss={outputs.loss.item():.4f} "
-                #     f"attn_align_loss={align_loss_item:.4f} "
-                # )
-                loss = align_loss * cfg.train.loss_weight + outputs.loss
+            local_tokens_t = torch.tensor([local_tokens], device=accelerator.device, dtype=torch.long)
+            global_tokens = accelerator.gather(local_tokens_t).sum().clamp_min(1)
+            local_attn_units_t = torch.tensor([local_attn_units], device=accelerator.device, dtype=torch.long)
+            global_attn_units = accelerator.gather(local_attn_units_t).sum().clamp_min(1)
 
-                attn_manager.clear()
+            window_lm_sum_local = torch.tensor(0.0, device=accelerator.device)
+            window_attn_sum_local = torch.tensor(0.0, device=accelerator.device)
+            # Process each micro-batch with accumulate()
+            for batch in micro_batches:
+                with accelerator.accumulate(model):
+                    batch.inputs.to(accelerator.device)
+                    labels = batch.labels.to(accelerator.device)
 
-                accelerator.backward(loss)
-                optimizer.step()
-                scheduler.step()
-                optimizer.zero_grad(set_to_none=True)
+                    outputs = model(**batch.inputs)  # no labels; compute token loss manually
+                    logits = outputs.logits
+
+                    shift_logits = logits[:, :-1, :].contiguous()
+                    shift_labels = labels[:, 1:].contiguous()
+
+                    # sum over valid tokens
+                    lm_loss_sum = F.cross_entropy(
+                        shift_logits.view(-1, shift_logits.size(-1)),
+                        shift_labels.view(-1),
+                        ignore_index=-100,
+                        reduction="sum",
+                    )
+
+                    lm_loss = (
+                        lm_loss_sum
+                        * accelerator.gradient_accumulation_steps
+                        * accelerator.num_processes
+                        / global_tokens
+                    )
+
+                    all_maps = attn_manager.get_attentions()
+                    
+                    align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
+                    for attn_layer, weight in target_attn_layer.items():
+                        phrase_attn = extract_t2i_attn(all_maps[attn_layer], batch, processor)
+                        align_loss_sum = attn_align_loss(phrase_attn, batch.masks)
+                        align_loss_sum_all_l += align_loss_sum * weight
+                    
+                    align_loss = (
+                        align_loss_sum_all_l
+                        * accelerator.gradient_accumulation_steps
+                        * accelerator.num_processes
+                        / global_attn_units
+                    )
+
+                    window_lm_sum_local += lm_loss_sum.detach()
+                    window_attn_sum_local += align_loss_sum_all_l.detach()
+
+                    loss = lm_loss + cfg.train.loss_weight * align_loss
+
+                    attn_manager.clear()
+                    accelerator.backward(loss)
+                    optimizer.step()
+                    scheduler.step()
+                    optimizer.zero_grad(set_to_none=True)
+
                 if accelerator.sync_gradients:
+                    # gather true window sums for metrics
+                    window_lm_sum_global = accelerator.gather(window_lm_sum_local.unsqueeze(0)).sum()
+                    window_attn_sum_global = accelerator.gather(window_attn_sum_local.unsqueeze(0)).sum()
+
+                    lm_metric = (window_lm_sum_global / global_tokens).item()
+                    attn_metric = (window_attn_sum_global / global_attn_units).item()
+                    total_metric = lm_metric + cfg.train.loss_weight * attn_metric
+
+                    lm_metric_total += lm_metric
+                    attn_metric_total += attn_metric
+                    total_metric_total += total_metric
+                    log_steps += 1
+
                     step += 1
                     progress.update(1)
 
-                    if accelerator.is_main_process and step > 0 and step % cfg.train.log_every == 0:
-                        avg_lm_loss = lm_loss_total / cfg.train.log_every
-                        avg_attn_loss = attn_loss_total / cfg.train.log_every
-                        avg_total_loss = avg_lm_loss + avg_attn_loss
-                        if wandb_run is not None:
-                            accelerator.log({
-                                "lm_loss": avg_lm_loss,
-                                "attn_align_loss": avg_attn_loss,
-                                "total_loss": avg_total_loss,
+                    if accelerator.is_main_process and step % cfg.train.log_every == 0 and wandb_run is not None:
+                        avg_lm = lm_metric_total / log_steps
+                        avg_attn = attn_metric_total / log_steps
+                        avg_total = total_metric_total / log_steps
+                        accelerator.log(
+                            {
+                                "lm_loss": avg_lm,
+                                "attn_align_loss": avg_attn,  # unweighted
+                                "total_loss": avg_total,
                                 "lr": scheduler.get_last_lr()[0],
-                                },
-                                step=step,
-                            )
-                        lm_loss_total = 0.0
-                        attn_loss_total = 0.0
+                            },
+                            step=step,
+                        )
+                        lm_metric_total = 0.0
+                        attn_metric_total = 0.0
+                        total_metric_total = 0.0
+                        log_steps = 0
 
-                    if accelerator.is_main_process and step > 0 and (step % cfg.train.save_every == 0 or step == total_training_steps-1) :
-                        out_dir = Path(cfg.train.output_dir)
+                    if accelerator.is_main_process and step > 0 and (step % cfg.train.save_every == 0 or step == total_training_steps) :
+                        out_dir = Path(cfg.train.run_name)
                         out_dir.mkdir(parents=True, exist_ok=True)
                         staging_dir = out_dir / f"staging-{step}"
                         
                         unwrapped_model = accelerator.unwrap_model(model)
                         unwrapped_model.save_pretrained(staging_dir)
-                        metadata = gen_metadata(staging_dir, step, cfg.train, message=f"Checkpoint at step {step}")
+                        metadata = gen_metadata(staging_dir, step, cfg.train, message=cfg.train.run_name)
                         
                         # print(f"[MAIN] Queueing Step {step} for upload.")
                         upload_queue.put((staging_dir, metadata))
@@ -223,7 +302,7 @@ def upload_worker():
             api.upload_folder(
                 folder_path=folder_path,
                 repo_id=REPO_ID,
-                commit_message=f"loss: {metadata['loss']}, loss_weight: {metadata['loss_weight']:.4f} - Step {metadata['step']}",
+                commit_message=f"loss: {metadata['loss']}, run name: {metadata['message']}, Step {metadata['step']}",
                 repo_type="model"
             )
             # print(f"[UPLOADER] Step {step} uploaded successfully.")
@@ -236,8 +315,9 @@ def upload_worker():
             # upload_queue.put(task) 
         
         upload_queue.task_done()
-        
-def gen_metadata(staging_dir: str, current_step: int, train_cfg, message: str = ""):
+
+
+def gen_metadata(staging_dir: str | Path, current_step: int, train_cfg, message: str = ""):
     metadata = {
         "loss": train_cfg.loss,
         "loss_weight": train_cfg.loss_weight,
