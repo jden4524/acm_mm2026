@@ -31,7 +31,7 @@ def load_and_save(adapter_path, output_path):
     base_model = Qwen3VLForConditionalGeneration.from_pretrained(base_model_id,device_map="cpu",low_cpu_mem_usage=True,dtype="auto")
     model = PeftModel.from_pretrained(base_model, adapter_path)
     
-    checkpoint_name = f"{meta['run']}_{meta['step']}"
+    checkpoint_name = f"{meta['message']}_{meta['step']}"
     checkpoint_dir = os.path.join(output_path, checkpoint_name)
     merged_model = model.merge_and_unload()
     merged_model.save_pretrained(checkpoint_dir, safe_serialization=True) # Saves as .safetensors
@@ -107,7 +107,7 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
         }
     }
 
-    fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME"]
+    fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME", "POPE"]
 
     eval_config["data"] = {k: v for k, v in data_mapping.items() if k in fast_subset}
     
