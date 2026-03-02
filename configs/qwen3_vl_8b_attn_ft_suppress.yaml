@@ -29,6 +29,6 @@ train:
   warmup_steps: 100
   mixed_precision: bf16
   log_every: 10
-  save_every: 1000
+  save_every: 500
   wandb_enabled: true
   wandb_project: attn_ft

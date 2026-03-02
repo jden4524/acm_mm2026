@@ -87,4 +87,4 @@ def soft_suppression_loss(
         return torch.tensor(0.0)
 
     loss_stack = torch.stack(losses)
-    return loss_stack.mean()
+    return loss_stack.sum()
