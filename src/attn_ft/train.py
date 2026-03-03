@@ -11,7 +11,7 @@ import threading
 import torch
 import torch.nn.functional as F
 from accelerate import Accelerator
-from torch.optim import AdamW
+from torch.optim import AdamW, SGD
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
@@ -94,7 +94,7 @@ def train(config_path: str) -> None:
         trainable_params = sum(p.numel() for p in trainable)
         accelerator.print(f"total parameters: {total_params}")
         accelerator.print(f"trainable parameters: {trainable_params}")
-    optimizer = AdamW(trainable, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    optimizer = SGD(trainable, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
 
     model, optimizer, dataloader = accelerator.prepare(
         model, optimizer, dataloader
