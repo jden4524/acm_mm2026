@@ -6,7 +6,7 @@ model:
   trust_remote_code: true
   load_in_4bit: false
   lora_r: 32
-  lora_alpha: 32
+  lora_alpha: 64
   lora_dropout: 0.1
   lora_target_modules: [q_proj, k_proj]
   attention_layers: 
@@ -17,18 +17,18 @@ model:
   attention_heads: []
 
 train:
-  run_name: qwen3_vl_8B_attn_ft_bsz32_4l_sgd_suppress
+  run_name: qwen3_vl_8B_attn_ft_bsz16_4l_sgd_suppress
   loss: suppress
-  loss_weight: 1
+  loss_weight: 4
   seed: 42
   micro_batch_size: 16
-  effective_batch_size: 32
+  effective_batch_size: 16
   num_epochs: 1
-  lr: 1.0e-3
+  lr: 2.0e-3
   weight_decay: 0.1
-  warmup_steps: 100
+  warmup_steps: 200
   mixed_precision: bf16
   log_every: 20
-  save_every: 1000
+  save_every: 3000
   wandb_enabled: true
   wandb_project: attn_ft
