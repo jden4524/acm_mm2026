@@ -22,9 +22,9 @@ train:
   loss_weight: 1
   seed: 42
   micro_batch_size: 16
-  effective_batch_size: 16
+  effective_batch_size: 32
   num_epochs: 1
-  lr: 1.0e-4
+  lr: 1.0e-3
   weight_decay: 0.1
   warmup_steps: 100
   mixed_precision: bf16
