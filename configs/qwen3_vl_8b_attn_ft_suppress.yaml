@@ -19,12 +19,12 @@ model:
 train:
   run_name: qwen3_vl_8B_attn_ft_bsz16_4l_sgd_suppress
   loss: suppress
-  loss_weight: 4
+  loss_weight: 2
   seed: 42
   micro_batch_size: 16
   effective_batch_size: 16
   num_epochs: 1
-  lr: 2.0e-3
+  lr: 1.0e-3
   weight_decay: 0.1
   warmup_steps: 200
   mixed_precision: bf16
