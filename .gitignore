@@ -1,10 +1,9 @@
 .vscode/
-eval_config.json
-outputs/
-src/attn_ft/__pycache__/
-src/attn_ft.egg-info/
+eval/eval_results/
+eval/VLMEvalKit/
+eval/eval_models/
+__pycache__/
+*.egg-info/
 notebooks/
-VLMEvalKit/
-eval_models/
 legacy/
 wandb/

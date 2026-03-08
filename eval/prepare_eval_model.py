@@ -3,18 +3,21 @@ from peft import PeftModel, LoraConfig
 import torch
 from transformers import AutoProcessor, Qwen3VLForConditionalGeneration     
 import os
+from pathlib import Path
 import json
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge PEFT LoRA weights into base model.")
     parser.add_argument(
         "--peft-dir",
+        type=Path,
         default="checkpoint-500",
         help="Checkpoint folder name to load (e.g., checkpoint-500).",
     )
 
     parser.add_argument(
         "--output-dir",
+        type=Path,
         default="hf_model-8B",
         help="Directory to save merged model.",
     )
@@ -22,9 +25,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def load_and_save(adapter_path, output_path):
-    with open(os.path.join(adapter_path, "adapter_config.json"), "r") as f:
+    with open(adapter_path /"adapter_config.json", "r") as f:
         config = json.load(f)
-    with open(f"{adapter_path}/metadata.json", "r") as f:
+    with open(adapter_path /"metadata.json", "r") as f:
         meta = json.load(f)
     base_model_id = config["base_model_name_or_path"]
     processor = AutoProcessor.from_pretrained(base_model_id)
@@ -32,7 +35,7 @@ def load_and_save(adapter_path, output_path):
     model = PeftModel.from_pretrained(base_model, adapter_path)
     
     checkpoint_name = f"{meta['message']}_{meta['step']}"
-    checkpoint_dir = os.path.join(output_path, checkpoint_name)
+    checkpoint_dir = output_path / checkpoint_name
     merged_model = model.merge_and_unload()
     merged_model.save_pretrained(checkpoint_dir, safe_serialization=True) # Saves as .safetensors
     processor.save_pretrained(checkpoint_dir)
@@ -92,7 +95,7 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
         "model": {
             checkpoint_name: {
                 "class": "Qwen3VLChat",
-                "model_path": checkpoint_dir,
+                "model_path": str(checkpoint_dir),
                 "use_custom_prompt": True,
                 "max_new_tokens": 1024,
                 "use_vllm": True,
@@ -110,16 +113,17 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
     fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME", "POPE"]
 
     eval_config["data"] = {k: v for k, v in data_mapping.items() if k in fast_subset}
-    
-    with open("eval_config.json", "w") as f:
+    config_path = checkpoint_dir / "eval_config.json"
+    with open(config_path, "w") as f:
         json.dump(eval_config, f, indent=2)
     
     
-def main() -> None:
-    args = parse_args()
-    checkpoint_name, checkpoint_dir = load_and_save(args.peft_dir, args.output_dir)
+def prepare_eval_model(peft_dir: Path, output_dir: Path) -> None:
+    checkpoint_name, checkpoint_dir = load_and_save(peft_dir, output_dir)
     write_eval_json(checkpoint_name, checkpoint_dir)
-    
+    return checkpoint_name, checkpoint_dir
+
 
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    prepare_eval_model(args.peft_dir, args.output_dir)
