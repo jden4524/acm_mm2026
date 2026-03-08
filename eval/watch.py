@@ -30,7 +30,6 @@ def eval_worker():
         checkpoint_name, checkpoint_dir = prepare_eval_model(local_dir, merged_dir)
         subprocess.run(["python", BASE_DIR / "VLMEvalKit" / "run.py", "--config", checkpoint_dir / "eval_config.json", "--work-dir", BASE_DIR / "eval_results"])
         log_eval_results(checkpoint_name=checkpoint_name)
-        print(f"--- [WORKER] Done with {commit_sha} ---")
         eval_queue.task_done()
         
 def get_checkpoint_notes(adapter_path):

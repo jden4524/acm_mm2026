@@ -47,7 +47,7 @@ def train(config_path: str) -> None:
         wandb_kwargs = {
             "project_name": cfg.train.wandb_project,
             "init_kwargs": {
-                "wandb": {"name": cfg.train.run_name}
+                "wandb": {"name": cfg.train.run_name, "job_type": "train"},
             },
             "config": {
                 "loss": cfg.train.loss,

@@ -78,7 +78,7 @@ def log_eval_results(checkpoint_name,
         name=run_name,
         id=run_id,
         resume="allow",
-        group=run_name,
+        job_type="eval",
     )
     metrics_to_log = {}
     for csv_file in csv_files:
