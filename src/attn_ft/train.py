@@ -94,7 +94,7 @@ def train(config_path: str) -> None:
         trainable_params = sum(p.numel() for p in trainable)
         accelerator.print(f"total parameters: {total_params}")
         accelerator.print(f"trainable parameters: {trainable_params}")
-    optimizer = SGD(trainable, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
+    optimizer = AdamW(trainable, lr=cfg.train.lr, weight_decay=cfg.train.weight_decay)
 
     model, optimizer, dataloader = accelerator.prepare(
         model, optimizer, dataloader
