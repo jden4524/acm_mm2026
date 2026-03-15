@@ -21,7 +21,7 @@ train:
   loss: suppress
   loss_weight: 2
   seed: 42
-  micro_batch_size: 64
+  micro_batch_size: 32
   effective_batch_size: 64
   num_epochs: 1
   lr: 1.0e-4
