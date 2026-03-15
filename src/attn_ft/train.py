@@ -27,7 +27,7 @@ from attn_ft.models import (
     load_model_and_processor
 )
 
-
+os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
     wandb_run = "wandb" if cfg.train.wandb_enabled else None
