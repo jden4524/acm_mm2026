@@ -6,7 +6,7 @@ model:
   trust_remote_code: true
   load_in_4bit: false
   lora_r: 32
-  lora_alpha: 64
+  lora_alpha: 16
   lora_dropout: 0.1
   lora_target_modules: [q_proj, k_proj]
   attention_layers: 
@@ -17,7 +17,7 @@ model:
   attention_heads: []
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_bsz64_4l_suppress
+  run_name: qwen3_vl_2B_attn_ft_bsz64_alpha16_suppress
   loss: suppress
   loss_weight: 2
   seed: 42
