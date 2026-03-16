@@ -5,7 +5,7 @@ model:
   name: Qwen/Qwen3-VL-2B-Instruct
   trust_remote_code: true
   load_in_4bit: false
-  lora_r: 32
+  lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
   lora_target_modules: [q_proj, k_proj]
@@ -17,12 +17,12 @@ model:
   attention_heads: []
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_bsz32_eqweight_suppress
+  run_name: qwen3_vl_2B_attn_ft_bsz16_eqweight_suppress
   loss: suppress
   loss_weight: 1
   seed: 42
-  micro_batch_size: 32
-  effective_batch_size: 32
+  micro_batch_size: 16
+  effective_batch_size: 16
   num_epochs: 1
   lr: 5.0e-5
   weight_decay: 0.1

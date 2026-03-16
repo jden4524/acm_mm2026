@@ -52,6 +52,20 @@ def log_csv_file(csv_path: Path) -> dict:
 
     return {}
 
+def log_checkpoint(checkpoint_name,
+                   results_root: Path) -> dict:
+    target_dir = results_root / checkpoint_name
+
+    if not target_dir.exists() or not target_dir.is_dir():
+        raise FileNotFoundError(f"Evaluation folder not found: {target_dir}")
+
+    csv_files = sorted(target_dir.rglob("*.csv"))
+
+    metrics_to_log = {}
+    for csv_file in csv_files:
+        metrics_to_log.update(log_csv_file(csv_file))
+
+    return metrics_to_log
 
 def log_eval_results(checkpoint_name,
                      run_name=None, 
@@ -59,20 +73,19 @@ def log_eval_results(checkpoint_name,
                      project: str="attn_ft") -> None:
     if run_name is None:
         run_name = "_".join(checkpoint_name.split("_")[:-1])
-    target_dir = results_root / checkpoint_name
-
-    if not target_dir.exists() or not target_dir.is_dir():
-        raise FileNotFoundError(f"Evaluation folder not found: {target_dir}")
-
-    csv_files = sorted(target_dir.rglob("*.csv"))
-    # get run id from json if exists, else create new run
+        
     wandb_run_id_path = results_root / "wandb_run_id.json"
+    # get run id from json if exists, else create new run
     if wandb_run_id_path.exists():
         with open(wandb_run_id_path, "r") as f:
             run_id_dict = json.load(f)
         run_id = run_id_dict.get(run_name)
     else:
         run_id = None
+    first_run = False
+    if run_id is None:
+        first_run = True
+        
     wandb.init(
         project=project,
         name=run_name,
@@ -80,13 +93,20 @@ def log_eval_results(checkpoint_name,
         resume="allow",
         job_type="eval",
     )
-    metrics_to_log = {}
-    for csv_file in csv_files:
-        metrics_to_log.update(log_csv_file(csv_file))
+    run_id = wandb.run.id
+    
+    if first_run:
+        if "2B" in checkpoint_name:
+            step0_checkpoint_name = "Qwen3-VL-2B-Instruct"
+        elif "8B" in checkpoint_name:
+            step0_checkpoint_name = "Qwen3-VL-8B-Instruct"
+        metrics_step0 = log_checkpoint(step0_checkpoint_name, results_root)
+        wandb.log(metrics_step0, step=0)
 
+    metrics_to_log = log_checkpoint(checkpoint_name, results_root)
     step = checkpoint_name.split("_")[-1]
     wandb.log(metrics_to_log, step=int(step))
-    run_id = wandb.run.id
+    
     wandb.finish()
     print(f"Logged {len(csv_files)} CSV files from {target_dir} to wandb")
     # load and update json for future reference
