@@ -17,18 +17,18 @@ model:
   attention_heads: []
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_bsz64_alpha16_suppress
+  run_name: qwen3_vl_2B_attn_ft_bsz32_eqweight_suppress
   loss: suppress
-  loss_weight: 2
+  loss_weight: 1
   seed: 42
   micro_batch_size: 32
-  effective_batch_size: 64
+  effective_batch_size: 32
   num_epochs: 1
-  lr: 1.0e-4
+  lr: 5.0e-5
   weight_decay: 0.1
   warmup_steps: 200
   mixed_precision: bf16
   log_every: 20
-  save_every: 1000
+  save_every: 2000
   wandb_enabled: true
   wandb_project: attn_ft
