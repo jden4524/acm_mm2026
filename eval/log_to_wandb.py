@@ -96,10 +96,14 @@ def log_eval_results(checkpoint_name,
     run_id = wandb.run.id
     
     if first_run:
+        print(f"Created new wandb run, logging step 0 checkpoint for reference")
         if "2B" in checkpoint_name:
             step0_checkpoint_name = "Qwen3-VL-2B-Instruct"
         elif "8B" in checkpoint_name:
             step0_checkpoint_name = "Qwen3-VL-8B-Instruct"
+        else:
+            raise ValueError(f"Cannot determine base checkpoint for {checkpoint_name}")
+        
         metrics_step0 = log_checkpoint(step0_checkpoint_name, results_root)
         wandb.log(metrics_step0, step=0)
 
@@ -108,7 +112,7 @@ def log_eval_results(checkpoint_name,
     wandb.log(metrics_to_log, step=int(step))
     
     wandb.finish()
-    print(f"Logged {len(csv_files)} CSV files from {target_dir} to wandb")
+    print(f"Logged {len(metrics_to_log)} metrics from {checkpoint_name} to wandb")
     # load and update json for future reference
 
     if wandb_run_id_path.exists():
