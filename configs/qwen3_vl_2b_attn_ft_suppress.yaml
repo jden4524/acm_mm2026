@@ -17,12 +17,12 @@ model:
   attention_heads: []
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_bsz16_eqweight_suppress
+  run_name: qwen3_vl_2B_attn_ft_bsz32_lowweight_suppress
   loss: suppress
-  loss_weight: 1
+  loss_weight: 0.5
   seed: 42
-  micro_batch_size: 16
-  effective_batch_size: 16
+  micro_batch_size: 32
+  effective_batch_size: 32
   num_epochs: 1
   lr: 5.0e-5
   weight_decay: 0.1
