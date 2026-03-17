@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import math
 import json
 from pathlib import Path
 import queue
@@ -128,7 +129,26 @@ def train(config_path: str) -> None:
         raise ValueError(f"Unsupported loss type: {cfg.train.loss}")
 
     target_attn_layer = cfg.model.attention_layers
-    accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
+    if cfg.model.use_all_attention_layers:
+        accelerator.print(
+            f"Using all attention layers for supervision with exponential decay={cfg.model.attention_layer_decay}"
+        )
+    else:
+        accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
+
+    def build_layer_weights(num_layers):
+        if not cfg.model.use_all_attention_layers:
+            return target_attn_layer
+
+        raw_weights = []
+        for layer_idx in range(num_layers):
+            distance_from_last = (num_layers - 1) - layer_idx
+            raw_weights.append(math.exp(-cfg.model.attention_layer_decay * distance_from_last))
+
+        weight_sum = sum(raw_weights)
+        if weight_sum == 0:
+            return {layer_idx: 1.0 / num_layers for layer_idx in range(num_layers)}
+        return {layer_idx: w / weight_sum for layer_idx, w in enumerate(raw_weights)}
 
     if cfg.model.grounding_head_calibration:
         if accelerator.num_processes > 1:
@@ -253,9 +273,10 @@ def train(config_path: str) -> None:
                     )
 
                     all_maps = attn_manager.get_attentions()
+                    layer_weights = build_layer_weights(len(all_maps))
                     
                     align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
-                    for attn_layer, weight in target_attn_layer.items():
+                    for attn_layer, weight in layer_weights.items():
                         if all_maps[attn_layer].shape[1] == 0:
                             continue
                         phrase_attn = extract_t2i_attn(all_maps[attn_layer], batch, processor)

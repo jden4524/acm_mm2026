@@ -28,6 +28,8 @@ class ModelConfig:
     lora_target_modules: List[str]
     attention_layers: Dict[int, float]
     attention_heads: List[int]
+    use_all_attention_layers: bool
+    attention_layer_decay: float
     grounding_head_calibration: bool
     calibration_batches: int
     top_mass_pct: float
@@ -87,6 +89,8 @@ def load_config(path: str | Path) -> Config:
         lora_target_modules=model.get("lora_target_modules", []),
         attention_layers=model.get("attention_layers", {-2:1.0}),
         attention_heads=model.get("attention_heads", []),
+        use_all_attention_layers=model.get("use_all_attention_layers", False),
+        attention_layer_decay=model.get("attention_layer_decay", 0.2),
         grounding_head_calibration=model.get("grounding_head_calibration", False),
         calibration_batches=model.get("calibration_batches", 1),
         top_mass_pct=model.get("top_mass_pct", 10.0),
