@@ -28,6 +28,10 @@ class ModelConfig:
     lora_target_modules: List[str]
     attention_layers: Dict[int, float]
     attention_heads: List[int]
+    grounding_head_calibration: bool
+    calibration_batches: int
+    top_mass_pct: float
+    low_entropy_pct: float
 
 
 @dataclass
@@ -83,6 +87,10 @@ def load_config(path: str | Path) -> Config:
         lora_target_modules=model.get("lora_target_modules", []),
         attention_layers=model.get("attention_layers", {-2:1.0}),
         attention_heads=model.get("attention_heads", []),
+        grounding_head_calibration=model.get("grounding_head_calibration", False),
+        calibration_batches=model.get("calibration_batches", 1),
+        top_mass_pct=model.get("top_mass_pct", 10.0),
+        low_entropy_pct=model.get("low_entropy_pct", 10.0),
     )
 
     train_cfg = TrainConfig(

@@ -15,11 +15,15 @@ model:
     -6: 0.2
     -8: 0.2
   attention_heads: []
+  grounding_head_calibration: true
+  calibration_batches: 2
+  top_mass_pct: 20
+  low_entropy_pct: 20
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_bsz32_lowweight_suppress
+  run_name: qwen3_vl_2B_attn_ft_headsel_suppress
   loss: suppress
-  loss_weight: 0.5
+  loss_weight: 1
   seed: 42
   micro_batch_size: 32
   effective_batch_size: 32

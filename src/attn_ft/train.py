@@ -18,7 +18,13 @@ from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
 from tqdm.auto import tqdm
 import os
 
-from attn_ft.attn_hooks import AttnHookManager, extract_t2i_attn
+from attn_ft.attn_hooks import (
+    AttnHookManager,
+    attn_logits_to_probs,
+    extract_t2i_attn,
+    select_grounding_heads,
+    update_head_stats,
+)
 from attn_ft.config import load_config
 from attn_ft.data import AttnSupervisionCollator
 from attn_ft.losses import ce_loss, soft_suppression_loss, vacuum_loss
@@ -124,6 +130,52 @@ def train(config_path: str) -> None:
     target_attn_layer = cfg.model.attention_layers
     accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
 
+    if cfg.model.grounding_head_calibration:
+        if accelerator.num_processes > 1:
+            accelerator.print("Skipping grounding head calibration: prototype path supports single-process only")
+        else:
+            accelerator.print("Running grounding head calibration forward pass...")
+            model.eval()
+            head_stats = {}
+            calibration_iter = iter(dataloader)
+            for _ in range(cfg.model.calibration_batches):
+                try:
+                    batch = next(calibration_iter)
+                except StopIteration:
+                    break
+
+                batch.inputs.to(accelerator.device)
+                try:
+                    with torch.no_grad():
+                        _ = model(**batch.inputs)
+
+                    all_maps = attn_manager.get_attentions()
+                    for layer_idx, attn_logits in enumerate(all_maps):
+                        attn_probs = attn_logits_to_probs(attn_logits)
+                        phrase_attn = extract_t2i_attn(attn_probs, batch, processor)
+                        for per_sample_attn in phrase_attn:
+                            if per_sample_attn is None:
+                                continue
+                            update_head_stats(head_stats, layer_idx, per_sample_attn)
+                finally:
+                    attn_manager.clear()
+
+            grounding_heads, debug = select_grounding_heads(
+                head_stats,
+                top_mass_pct=cfg.model.top_mass_pct,
+                low_entropy_pct=cfg.model.low_entropy_pct,
+            )
+            accelerator.print(
+                f"Grounding head calibration done: selected={debug.get('selected', 0)} / {debug.get('num_candidates', 0)}"
+            )
+            if debug.get("num_candidates", 0) > 0:
+                accelerator.print(
+                    f"Thresholds: mass>={debug['mass_thresh']:.6f}, entropy<={debug['entropy_thresh']:.6f}"
+                )
+            accelerator.print("Selected grounding heads by layer:", grounding_heads)
+            attn_manager.attach(model, selected_heads_map=grounding_heads)
+            model.train()
+
     def build_accum_window(data_iterator: Iterator):
         micro_batches = []
         for _ in range(cfg.train.grad_accum_steps):
@@ -204,6 +256,8 @@ def train(config_path: str) -> None:
                     
                     align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
                     for attn_layer, weight in target_attn_layer.items():
+                        if all_maps[attn_layer].shape[1] == 0:
+                            continue
                         phrase_attn = extract_t2i_attn(all_maps[attn_layer], batch, processor)
                         align_loss_sum = attn_align_loss(phrase_attn, batch.masks)
                         align_loss_sum_all_l += align_loss_sum * weight
