@@ -18,7 +18,7 @@ model:
   use_all_attention_layers: true
   attention_layer_decay: 0.1
   grounding_head_calibration: true
-  calibration_batches: 2
+  calibration_batches: 32
   top_mass_pct: 20
   low_entropy_pct: 20
 
@@ -36,5 +36,5 @@ train:
   mixed_precision: bf16
   log_every: 20
   save_every: 2000
-  wandb_enabled: true
+  wandb_enabled: false
   wandb_project: attn_ft

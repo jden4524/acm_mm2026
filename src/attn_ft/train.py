@@ -172,11 +172,11 @@ def train(config_path: str) -> None:
                     all_maps = attn_manager.get_attentions()
                     for layer_idx, attn_logits in enumerate(all_maps):
                         attn_probs = attn_logits_to_probs(attn_logits)
-                        phrase_attn = extract_t2i_attn(attn_probs, batch, processor)
-                        for per_sample_attn in phrase_attn:
+                        t2i_attn = extract_t2i_attn(attn_logits, batch, processor)
+                        for per_sample_attn, mask in zip(t2i_attn, batch.masks):
                             if per_sample_attn is None:
                                 continue
-                            update_head_stats(head_stats, layer_idx, per_sample_attn)
+                            update_head_stats(head_stats, layer_idx, per_sample_attn, mask)
                 finally:
                     attn_manager.clear()
 
@@ -190,7 +190,7 @@ def train(config_path: str) -> None:
             )
             if debug.get("num_candidates", 0) > 0:
                 accelerator.print(
-                    f"Thresholds: mass>={debug['mass_thresh']:.6f}, entropy<={debug['entropy_thresh']:.6f}"
+                    f"Thresholds: mass>={debug['mass_thresh']:.6f}, entropy<={debug['entropy_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
                 )
             accelerator.print("Selected grounding heads by layer:", grounding_heads)
             attn_manager.attach(model, selected_heads_map=grounding_heads)

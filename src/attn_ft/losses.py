@@ -65,6 +65,7 @@ def vacuum_loss(
 def soft_suppression_loss(
     pred: list[torch.Tensor],
     target: list[torch.Tensor],
+    per_head: bool = False,
 ) -> torch.Tensor | tuple[torch.Tensor, int]:
     losses = []
     if len(pred) == 0 or len(target) == 0:
@@ -79,7 +80,11 @@ def soft_suppression_loss(
             log_sum_neg = torch.logsumexp(p*(1-t), dim=-1)
 
             loss = torch.logaddexp(log_sum_pos, log_sum_neg) - log_sum_pos
-            loss = loss.mean()
+            
+            if per_head:
+                loss = loss.mean(dim=-1)
+            else:
+                loss = loss.mean()
         
             losses.append(loss)
     
@@ -87,4 +92,6 @@ def soft_suppression_loss(
         return torch.tensor(0.0)
 
     loss_stack = torch.stack(losses)
+    if per_head:
+        return loss_stack.mean(dim=0)
     return loss_stack.sum()

@@ -1,11 +1,11 @@
 import torch
 from attn_ft.data import AttnBatch
+from attn_ft.losses import soft_suppression_loss
 
 def extract_t2i_attn(
     attn: torch.Tensor,
     batch: AttnBatch,
-    processor
-) -> torch.Tensor:
+    processor) -> torch.Tensor:
     """Extracts and aggregates text-to-image attention maps
 
     Expects a tensor with a head dimension (e.g. [B, H, T, S] or [H, T, S]).
@@ -17,13 +17,10 @@ def extract_t2i_attn(
         is_image = batch.inputs["input_ids"][b] == img_token_id
         image_idx = is_image.nonzero(as_tuple=False).squeeze(1)
         layer_attn = attn[b]  # [heads, seq, seq]
+        text_to_image = None
         if batch.token_spans[b]:
             text_to_image = layer_attn[:, batch.token_spans[b], image_idx]
-        
-            # H, W = batch.masks[b].shape # 
-            # attn_2d = text_to_image.view(layer_attn.shape[0], -1, H, W) # Reshape to (heads, num_text_tokens, H, W)
-        else:
-            text_to_image = None
+
         extracted.append(text_to_image)
 
     return extracted
@@ -33,32 +30,40 @@ def attn_logits_to_probs(attn: torch.Tensor) -> torch.Tensor:
     return torch.softmax(attn, dim=-1)
 
 
-def update_head_stats(head_stats, layer_idx, t2i_attn):
+def update_head_stats(head_stats, layer_idx, t2i_attn, label):
     if layer_idx not in head_stats:
         num_heads = t2i_attn.shape[0]
         device = t2i_attn.device
         head_stats[layer_idx] = {
             "mass_sum": torch.zeros(num_heads, device=device),
             "entropy_sum": torch.zeros(num_heads, device=device),
+            "alignment_score": torch.zeros(num_heads, device=device),
             "count": torch.zeros(num_heads, device=device),
         }
 
     mass_per_head = t2i_attn.sum(dim=(-1, -2))
 
-    p = t2i_attn / (t2i_attn.sum(dim=-1, keepdim=True) + 1e-8)
-    entropy_per_token = -(p * torch.log(p + 1e-8)).sum(dim=-1)
-    entropy_per_head = entropy_per_token.mean(dim=-1)
+    alignment_scores = soft_suppression_loss([t2i_attn], [label], per_head=True)
+    # print(alignment_scores.shape)
+
+    # p = t2i_attn / (t2i_attn.sum(dim=-1, keepdim=True) + 1e-8)
+    # entropy_per_token = -(p * torch.log(p + 1e-8)).sum(dim=-1)
+    # entropy_per_head = entropy_per_token.mean(dim=-1)
+    entropy_per_head = 1
 
     head_stats[layer_idx]["mass_sum"] += mass_per_head
+    head_stats[layer_idx]["alignment_score"] += alignment_scores
     head_stats[layer_idx]["entropy_sum"] += entropy_per_head
+    
     head_stats[layer_idx]["count"] += 1
 
 
-def select_grounding_heads(head_stats, top_mass_pct=10.0, low_entropy_pct=10.0):
+def select_grounding_heads(head_stats, top_mass_pct=10.0, low_entropy_pct=10.0, low_alignment_pct=20.0):
     candidates = []
     for layer_idx, stats in head_stats.items():
         mass_mean = stats["mass_sum"] / stats["count"].clamp_min(1)
         entropy_mean = stats["entropy_sum"] / stats["count"].clamp_min(1)
+        alignment_mean = stats["alignment_score"] / stats["count"].clamp_min(1)
         for head_idx in range(mass_mean.shape[0]):
             candidates.append(
                 {
@@ -66,6 +71,7 @@ def select_grounding_heads(head_stats, top_mass_pct=10.0, low_entropy_pct=10.0):
                     "head_idx": int(head_idx),
                     "mass": float(mass_mean[head_idx].item()),
                     "entropy": float(entropy_mean[head_idx].item()),
+                    "alignment": float(alignment_mean[head_idx].item()),
                 }
             )
 
@@ -74,13 +80,17 @@ def select_grounding_heads(head_stats, top_mass_pct=10.0, low_entropy_pct=10.0):
 
     mass_values = torch.tensor([c["mass"] for c in candidates])
     entropy_values = torch.tensor([c["entropy"] for c in candidates])
+    alignment_values = torch.tensor([c["alignment"] for c in candidates])
 
     mass_thresh = torch.quantile(mass_values, 1.0 - top_mass_pct / 100.0).item()
     entropy_thresh = torch.quantile(entropy_values, low_entropy_pct / 100.0).item()
+    alignment_thresh = torch.quantile(alignment_values, low_alignment_pct / 100.0).item()
 
     selected = [
         c for c in candidates
-        if c["mass"] >= mass_thresh and c["entropy"] <= entropy_thresh
+        if c["alignment"] <= alignment_thresh
+        # c["mass"] >= mass_thresh and c["entropy"] <= entropy_thresh and 
+        
     ]
 
     selected_map = {}
@@ -95,6 +105,7 @@ def select_grounding_heads(head_stats, top_mass_pct=10.0, low_entropy_pct=10.0):
         "selected": len(selected),
         "mass_thresh": mass_thresh,
         "entropy_thresh": entropy_thresh,
+        "alignment_thresh": alignment_thresh,
     }
     return selected_map, debug
 
