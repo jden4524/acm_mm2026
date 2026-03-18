@@ -23,7 +23,7 @@ model:
   low_entropy_pct: 20
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_headsel_bugfix_suppress
+  run_name: qwen3_vl_2B_attn_ft_headsel_alignscore_suppress
   loss: suppress
   loss_weight: 1
   seed: 42
@@ -36,5 +36,5 @@ train:
   mixed_precision: bf16
   log_every: 20
   save_every: 2000
-  wandb_enabled: false
+  wandb_enabled: true
   wandb_project: attn_ft
