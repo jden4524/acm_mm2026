@@ -12,7 +12,7 @@ def parse_args() -> argparse.Namespace:
         description="Log all CSV metrics from eval_results/<run_name> to Weights & Biases."
     )
     parser.add_argument(
-        "checkpoint_name",
+        "--checkpoint_name",
         help="Folder name under eval_results (XXX in ./eval_results/XXX).",
     )
     parser.add_argument(
@@ -109,7 +109,8 @@ def log_eval_results(checkpoint_name,
 
     metrics_to_log = log_checkpoint(checkpoint_name, results_root)
     step = checkpoint_name.split("_")[-1]
-    wandb.log(metrics_to_log, step=int(step))
+    if len(metrics_to_log) > 0:
+        wandb.log(metrics_to_log, step=int(step))
     
     wandb.finish()
     print(f"Logged {len(metrics_to_log)} metrics from {checkpoint_name} to wandb")

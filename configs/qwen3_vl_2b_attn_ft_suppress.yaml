@@ -8,7 +8,7 @@ model:
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
-  lora_target_modules: [q_proj, k_proj]
+  lora_target_modules: [q_proj, k_proj, v_proj, visual.merger.linear_fc2, deepstack_merger_list.*.linear_fc2]
   attention_layers: 
     -2: 0.4
     -4: 0.2
@@ -23,7 +23,7 @@ model:
   low_entropy_pct: 20
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_headsel_alignscore_suppress
+  run_name: qwen3_vl_2B_attn_ft_headsel_alignscore_expandedlora_suppress
   loss: suppress
   loss_weight: 1
   seed: 42
