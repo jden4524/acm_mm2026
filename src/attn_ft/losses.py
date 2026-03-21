@@ -1,65 +1,70 @@
 from __future__ import annotations
-import torch.nn.functional as F
 import torch
 
 
-def ce_loss(
+def _zero_like(pred: list[torch.Tensor], target: list[torch.Tensor]) -> torch.Tensor:
+    for tensor in pred:
+        if tensor is not None and tensor.numel() > 0:
+            return tensor.new_zeros(())
+    for tensor in target:
+        if tensor is not None and tensor.numel() > 0:
+            return tensor.new_zeros(())
+    return torch.tensor(0.0)
+
+
+def _prepare_padded_inputs(
     pred: list[torch.Tensor],
     target: list[torch.Tensor],
-    eps: float = 1.0e-6,
-) -> torch.Tensor | tuple[torch.Tensor, int]:
-    losses = []
-    if len(pred) == 0 or len(target) == 0:
-        return torch.tensor(0.0)
-    
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor] | None:
+    if not pred or not target:
+        return None
+
+    zero = _zero_like(pred, target)
+    num_heads: int | None = None
+    valid: list[tuple[torch.Tensor, torch.Tensor]] = []
+    max_t = 0
+    max_s = 0
+
     for p, t in zip(pred, target):
-        if t is not None and p is not None:
-            
-            t = t.to(p.device).view(-1)
-  
-            rescaled_p = p / (p.sum(dim=-1, keepdim=True) + 1e-8)
-            a = rescaled_p * t
-            a_agg = a.mean(dim=-2)
+        if p is None or t is None or p.numel() == 0 or t.numel() == 0:
+            continue
+        if p.dim() != 3:
+            continue
 
-            loss = -(t*torch.log(a_agg + 1e-8)).sum(dim=-1).mean()
-        
-            losses.append(loss)
-    
-    if len(losses) == 0:
-        return torch.tensor(0.0)
+        if num_heads is None:
+            num_heads = p.shape[0]
+        if p.shape[0] != num_heads:
+            continue
 
-    loss_stack = torch.stack(losses)
-    return loss_stack.mean()
+        t_flat = t.to(device=p.device, dtype=p.dtype).reshape(-1)
+        if p.shape[-1] != t_flat.shape[0]:
+            continue
 
+        valid.append((p, t_flat))
+        max_t = max(max_t, p.shape[1])
+        max_s = max(max_s, p.shape[2])
 
-def vacuum_loss(
-    pred: list[torch.Tensor],
-    target: list[torch.Tensor],
-    tau: float = 1.0,
-    return_stats: bool = False,
-) -> torch.Tensor | tuple[torch.Tensor, int]:
-    losses = []
-    if len(pred) == 0 or len(target) == 0:
-        return 0
-    
-    for p, t in zip(pred, target):
-        if t is not None and p is not None:
-            
-            t = t.to(p.device).view(-1)
-            
-            rescaled_p = p / (p.sum(dim=-1, keepdim=True) + 1e-8)
-            a = rescaled_p * t
-            a_agg = a.mean(dim=-2)
+    if not valid or num_heads is None:
+        return None
 
-            loss = -torch.log((a_agg*t).sum(dim=-1) + 1e-8).mean()
-        
-            losses.append(loss)
-    
-    if len(losses) == 0:
-        return torch.tensor(0.0)
+    n = len(valid)
+    device = valid[0][0].device
+    dtype = valid[0][0].dtype
 
-    loss_stack = torch.stack(losses)
-    return loss_stack.mean()
+    logits = torch.zeros((n, num_heads, max_t, max_s), device=device, dtype=dtype)
+    targets = torch.zeros((n, max_s), device=device, dtype=dtype)
+    text_mask = torch.zeros((n, max_t), device=device, dtype=torch.bool)
+    image_mask = torch.zeros((n, max_s), device=device, dtype=torch.bool)
+
+    for i, (p, t_flat) in enumerate(valid):
+        t_len = p.shape[1]
+        s_len = p.shape[2]
+        logits[i, :, :t_len, :s_len] = p
+        targets[i, :s_len] = t_flat
+        text_mask[i, :t_len] = True
+        image_mask[i, :s_len] = True
+
+    return logits, targets, text_mask, image_mask, zero
 
 
 def soft_suppression_loss(
@@ -68,31 +73,35 @@ def soft_suppression_loss(
     per_head: bool = False,
     temp: float = 1.0,
 ) -> torch.Tensor | tuple[torch.Tensor, int]:
-    losses = []
-    if len(pred) == 0 or len(target) == 0:
-        return 0
-    
-    for p, t in zip(pred, target):
-        if t is not None and p is not None:
-            
-            t = t.to(p.device).view(-1)
-            
-            log_sum_pos = torch.logsumexp(p*t, dim=-1)
-            log_sum_neg = torch.logsumexp(p*(1-t)/temp, dim=-1)
-            
-            loss = torch.logaddexp(log_sum_pos, log_sum_neg) - log_sum_pos
+    packed = _prepare_padded_inputs(pred, target)
+    if packed is None:
+        return _zero_like(pred, target)
 
-            if per_head:
-                loss = loss.mean(dim=-1)
-            else:
-                loss = loss.mean()
-        
-            losses.append(loss)
-    
-    if len(losses) == 0:
-        return torch.tensor(0.0)
+    logits, targets, text_mask, image_mask, zero = packed
+    if temp <= 0:
+        raise ValueError(f"temp must be > 0, got {temp}")
 
-    loss_stack = torch.stack(losses)
+    valid_image = image_mask[:, None, None, :]
+    target_4d = targets[:, None, None, :]
+    neg_inf = torch.finfo(logits.dtype).min
+
+    pos_logits = (logits * target_4d).masked_fill(~valid_image, neg_inf)
+    neg_logits = (logits * (1.0 - target_4d) / temp).masked_fill(~valid_image, neg_inf)
+
+    log_sum_pos = torch.logsumexp(pos_logits, dim=-1)
+    log_sum_neg = torch.logsumexp(neg_logits, dim=-1)
+    loss_per_text = torch.logaddexp(log_sum_pos, log_sum_neg) - log_sum_pos
+
+    valid_text = text_mask[:, None, :]
+    masked_loss = loss_per_text * valid_text
+    text_counts = text_mask.sum(dim=-1).clamp_min(1).to(logits.dtype)
+
     if per_head:
-        return loss_stack
-    return loss_stack.sum()
+        return masked_loss.sum(dim=-1) / text_counts[:, None]
+
+    num_heads = logits.shape[1]
+    if num_heads == 0:
+        return zero
+
+    sample_loss = masked_loss.sum(dim=(-1, -2)) / (text_counts * num_heads)
+    return sample_loss.sum()

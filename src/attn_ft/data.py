@@ -54,16 +54,6 @@ def _resize_mask_to_grid(mask: Image.Image, grid_size: Tuple[int, int]) -> torch
     arr = np.array(resized, dtype=np.float32)
     return torch.from_numpy((arr > 0).astype(np.float32))
 
-def _prepare_labels(input_ids, assistant_start_idx):
-    # Start by masking EVERYTHING as -100
-    labels = torch.full_like(input_ids, -100)
-    
-    # Only allow the model to learn the tokens AFTER the assistant header
-    # Example: input_ids[assistant_start_idx:] is "A small orange cat.<|endoftext|>"
-    labels[assistant_start_idx:] = input_ids[assistant_start_idx:]
-    
-    return labels
-
 class Flickr30kSamDataset(Dataset):
     def __init__(
         self,
@@ -125,8 +115,10 @@ class Flickr30kSamDataset(Dataset):
 @dataclass
 class AttnBatch:
     inputs: Dict[str, torch.Tensor]
-    masks: torch.Tensor
-    token_spans: List[slice]
+    masks: List[torch.Tensor]
+    token_spans: List[Optional[slice]]
+    image_token_indices: List[torch.Tensor]
+    valid_supervision_indices: List[int]
     captions: List[str]
     image_stems: List[Optional[str]]
     labels: Optional[torch.Tensor] = None
@@ -177,6 +169,11 @@ class AttnSupervisionCollator:
         )
         offsets = tokenized["offset_mapping"]
         assistant_idx = (inputs["input_ids"] == 77091).nonzero(as_tuple=True)[1].tolist()
+        img_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+        image_token_indices = [
+            (inputs["input_ids"][i] == img_token_id).nonzero(as_tuple=False).squeeze(1)
+            for i in range(len(batch))
+        ]
         # calculate vision grid size based on processor/model config and image sizes
         pad_token_id = self.processor.tokenizer.pad_token_id
         
@@ -185,6 +182,7 @@ class AttnSupervisionCollator:
         masks = [] #torch.zeros((bsz, h, w), dtype=torch.float32)
 
         token_spans = []
+        valid_supervision_indices = []
         labels = inputs["input_ids"].clone()
 
         for i in range(bsz):
@@ -209,11 +207,15 @@ class AttnSupervisionCollator:
                 continue
             # assistant token is followed by \n, so starting from +2
             token_spans.append(slice(token_span[0]+assistant_idx[i]+2, token_span[1]+assistant_idx[i]+3))
+            if image_token_indices[i].numel() > 0:
+                valid_supervision_indices.append(i)
 
         return AttnBatch(
             inputs=inputs,
             masks=masks,
             token_spans=token_spans,
+            image_token_indices=image_token_indices,
+            valid_supervision_indices=valid_supervision_indices,
             captions=captions,
             image_stems=image_stems,
             labels=labels

@@ -12,7 +12,7 @@ import threading
 import torch
 import torch.nn.functional as F
 from accelerate import Accelerator
-from torch.optim import AdamW, SGD
+from torch.optim import AdamW
 from datasets import load_dataset
 from torch.utils.data import DataLoader
 from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
@@ -21,14 +21,13 @@ import os
 
 from attn_ft.attn_hooks import (
     AttnHookManager,
-    attn_logits_to_probs,
-    extract_t2i_attn,
+    extract_t2i_attn_valid,
     select_grounding_heads,
     update_head_stats,
 )
 from attn_ft.config import load_config
 from attn_ft.data import AttnSupervisionCollator
-from attn_ft.losses import ce_loss, soft_suppression_loss, vacuum_loss
+from attn_ft.losses import soft_suppression_loss
 from attn_ft.models import (
     filter_trainable_parameters,
     load_model_and_processor
@@ -40,7 +39,14 @@ def train(config_path: str) -> None:
     wandb_run = "wandb" if cfg.train.wandb_enabled else None
     
     NUM_GPUS = int(os.environ.get("WORLD_SIZE", 1))
-    cfg.train.grad_accum_steps = cfg.train.effective_batch_size // (cfg.train.micro_batch_size  * NUM_GPUS)
+    denom = cfg.train.micro_batch_size * NUM_GPUS
+    cfg.train.grad_accum_steps = cfg.train.effective_batch_size // denom
+    if cfg.train.grad_accum_steps < 1:
+        raise ValueError(
+            "effective_batch_size must be >= micro_batch_size * WORLD_SIZE "
+            f"(got effective_batch_size={cfg.train.effective_batch_size}, "
+            f"micro_batch_size={cfg.train.micro_batch_size}, WORLD_SIZE={NUM_GPUS})"
+        )
 
     accelerator = Accelerator(
         mixed_precision="bf16",
@@ -114,17 +120,10 @@ def train(config_path: str) -> None:
     )
     scheduler = accelerator.prepare(scheduler)
     
-    if cfg.train.loss == "ce":
-        attn_align_loss = ce_loss
-        accelerator.print("Using cross-entropy loss for attention alignment")
-    elif cfg.train.loss == "vacuum":
-        attn_align_loss = vacuum_loss
-        accelerator.print("Using vacuum loss for attention alignment")
-    elif cfg.train.loss == "suppress":
-        attn_align_loss = soft_suppression_loss
-        accelerator.print("Using soft suppression loss for attention alignment")
-    else:
-        raise ValueError(f"Unsupported loss type: {cfg.train.loss}")
+    if cfg.train.loss != "suppress":
+        raise ValueError(f"Unsupported loss type: {cfg.train.loss}. This trainer only supports 'suppress'.")
+    attn_align_loss = soft_suppression_loss
+    accelerator.print("Using soft suppression loss for attention alignment")
 
     target_attn_layer = cfg.model.attention_layers
     if cfg.model.use_all_attention_layers:
@@ -134,9 +133,20 @@ def train(config_path: str) -> None:
     else:
         accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
 
-    def build_layer_weights(num_layers):
+    layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
+
+    def build_layer_schedule(num_layers: int) -> tuple[list[int], list[float]]:
+        if num_layers in layer_schedule_cache:
+            return layer_schedule_cache[num_layers]
+
         if not cfg.model.use_all_attention_layers:
-            return target_attn_layer
+            if isinstance(target_attn_layer, int):
+                layer_ids = [target_attn_layer]
+            else:
+                layer_ids = list(target_attn_layer)
+            layer_weights = [1.0] * len(layer_ids)
+            layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
+            return layer_ids, layer_weights
 
         raw_weights = []
         for layer_idx in range(num_layers):
@@ -145,8 +155,15 @@ def train(config_path: str) -> None:
 
         weight_sum = sum(raw_weights)
         if weight_sum == 0:
-            return {layer_idx: 1.0 / num_layers for layer_idx in range(num_layers)}
-        return {layer_idx: w / weight_sum for layer_idx, w in enumerate(raw_weights)}
+            layer_ids = list(range(num_layers))
+            layer_weights = [1.0 / num_layers] * num_layers
+            layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
+            return layer_ids, layer_weights
+
+        layer_ids = list(range(num_layers))
+        layer_weights = [w / weight_sum for w in raw_weights]
+        layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
+        return layer_ids, layer_weights
 
     if cfg.model.grounding_head_calibration:
         if accelerator.num_processes > 1:
@@ -166,8 +183,8 @@ def train(config_path: str) -> None:
 
                     all_maps = attn_manager.get_attentions()
                     for layer_idx, attn_logits in enumerate(all_maps):
-                        t2i_attn = extract_t2i_attn(attn_logits, batch, processor)
-                        update_head_stats(head_stats, layer_idx, t2i_attn, batch.masks)
+                        t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch)
+                        update_head_stats(head_stats, layer_idx, t2i_attn, valid_masks)
 
                         # for per_sample_attn, mask in zip(t2i_attn, batch.masks):
                         #     if per_sample_attn is None:
@@ -195,15 +212,8 @@ def train(config_path: str) -> None:
             except StopIteration:
                 break
 
-        local_tokens = 0
-        local_attn_units = 0
-        for mb in micro_batches:
-            local_tokens += (mb.labels[:, 1:] != -100).sum().item()
-            local_attn_units += sum(
-                1
-                for token_span, mask in zip(mb.token_spans, mb.masks)
-                if token_span is not None and mask is not None
-            )
+        local_tokens = sum((mb.labels[:, 1:] != -100).sum().item() for mb in micro_batches)
+        local_attn_units = sum(len(mb.valid_supervision_indices) for mb in micro_batches)
 
         return micro_batches, local_tokens, local_attn_units
 
@@ -264,15 +274,43 @@ def train(config_path: str) -> None:
                     )
 
                     all_maps = attn_manager.get_attentions()
-                    layer_weights = build_layer_weights(len(all_maps))
+                    layer_ids, layer_weights = build_layer_schedule(len(all_maps))
                     
                     align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
-                    for attn_layer, weight in layer_weights.items():
-                        if all_maps[attn_layer].shape[1] == 0:
+                    pred_chunks: list[list[torch.Tensor]] | None = None
+                    merged_masks: list[torch.Tensor] | None = None
+                    head_weight_chunks: list[torch.Tensor] = []
+
+                    for attn_layer, weight in zip(layer_ids, layer_weights):
+                        layer_attn = all_maps[attn_layer]
+                        if layer_attn.shape[1] == 0:
                             continue
-                        phrase_attn = extract_t2i_attn(all_maps[attn_layer], batch, processor)
-                        align_loss_sum = attn_align_loss(phrase_attn, batch.masks)
-                        align_loss_sum_all_l += align_loss_sum * weight
+
+                        pred_list, mask_list = extract_t2i_attn_valid(layer_attn, batch)
+                        if not pred_list:
+                            continue
+
+                        heads_in_layer = pred_list[0].shape[0]
+                        if heads_in_layer == 0:
+                            continue
+
+                        if pred_chunks is None:
+                            pred_chunks = [[] for _ in pred_list]
+                            merged_masks = mask_list
+
+                        for sample_idx, sample_pred in enumerate(pred_list):
+                            pred_chunks[sample_idx].append(sample_pred)
+
+                        per_head_weight = weight / heads_in_layer
+                        head_weight_chunks.append(
+                            torch.full((heads_in_layer,), per_head_weight, device=accelerator.device, dtype=torch.float32)
+                        )
+
+                    if pred_chunks and merged_masks and head_weight_chunks:
+                        merged_preds = [torch.cat(chunks, dim=0) for chunks in pred_chunks]
+                        per_head_loss = attn_align_loss(merged_preds, merged_masks, per_head=True)
+                        head_weights = torch.cat(head_weight_chunks).to(per_head_loss.dtype)
+                        align_loss_sum_all_l = (per_head_loss * head_weights.unsqueeze(0)).sum()
                     
                     align_loss = (
                         align_loss_sum_all_l

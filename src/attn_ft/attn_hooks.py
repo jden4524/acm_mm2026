@@ -4,32 +4,24 @@ from attn_ft.data import AttnBatch
 from attn_ft.losses import soft_suppression_loss
 
 
-def extract_t2i_attn(
+def extract_t2i_attn_valid(
     attn: torch.Tensor,
     batch: AttnBatch,
-    processor,
-) -> torch.Tensor:
-    """Extracts and aggregates text-to-image attention maps.
-
-    Expects a tensor with a head dimension (e.g. [B, H, T, S] or [H, T, S]).
-    Returns a list of tensors, each with shape (heads, num_text_tokens, H, W).
-    """
-    img_token_id = processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
+) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     extracted = []
-    for b, layer_attn in enumerate(attn):
-        is_image = batch.inputs["input_ids"][b] == img_token_id
-        image_idx = is_image.nonzero(as_tuple=False).squeeze(1)
-        token_span = batch.token_spans[b]
-        extracted.append(layer_attn[:, token_span, image_idx] if token_span else None)
-
-    return extracted
-
-
-def attn_logits_to_probs(attn: torch.Tensor) -> torch.Tensor:
-    return torch.softmax(attn, dim=-1)
+    masks = []
+    for batch_idx in batch.valid_supervision_indices:
+        token_span = batch.token_spans[batch_idx]
+        image_idx = batch.image_token_indices[batch_idx]
+        extracted.append(attn[batch_idx][:, token_span, image_idx])
+        masks.append(batch.masks[batch_idx])
+    return extracted, masks
 
 
 def update_head_stats(head_stats, layer_idx, t2i_attn, label):
+    if not t2i_attn:
+        return
+
     if layer_idx not in head_stats:
         num_heads = t2i_attn[0].shape[0]
         device = t2i_attn[0].device
@@ -39,7 +31,7 @@ def update_head_stats(head_stats, layer_idx, t2i_attn, label):
             "count": torch.zeros(num_heads, device=device),
         }
 
-    mass_per_head = torch.stack([attn.sum(dim=(-1, -2)) for attn in t2i_attn if attn is not None])
+    mass_per_head = torch.stack([attn.sum(dim=(-1, -2)) for attn in t2i_attn])
     alignment_score_per_head = soft_suppression_loss(t2i_attn, label, per_head=True, temp=5)
 
     head_stats[layer_idx]["mass_sum"] += mass_per_head.mean(dim=0)
