@@ -3,8 +3,6 @@ dataset:
 
 model:
   name: Qwen/Qwen3-VL-2B-Instruct
-  trust_remote_code: true
-  load_in_4bit: false
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
@@ -18,12 +16,10 @@ model:
   use_all_attention_layers: true
   attention_layer_decay: 0.1
   grounding_head_calibration: true
-  calibration_batches: 32
-  top_mass_pct: 20
-  low_entropy_pct: 20
+  calibration_batches: 50
 
 train:
-  run_name: qwen3_vl_2B_attn_ft_headsel_alignscore_expandedlora_suppress
+  run_name: Qwen3-VL-2B_headsel_bugfix_expandedlora_suppress
   loss: suppress
   loss_weight: 1
   seed: 42
@@ -33,7 +29,6 @@ train:
   lr: 5.0e-5
   weight_decay: 0.1
   warmup_steps: 200
-  mixed_precision: bf16
   log_every: 20
   save_every: 2000
   wandb_enabled: true

@@ -43,7 +43,7 @@ def train(config_path: str) -> None:
     cfg.train.grad_accum_steps = cfg.train.effective_batch_size // (cfg.train.micro_batch_size  * NUM_GPUS)
 
     accelerator = Accelerator(
-        mixed_precision=cfg.train.mixed_precision,
+        mixed_precision="bf16",
         gradient_accumulation_steps=cfg.train.grad_accum_steps,
         log_with=wandb_run,
     )
@@ -72,8 +72,6 @@ def train(config_path: str) -> None:
 
     model, processor = load_model_and_processor(
         cfg.model.name,
-        cfg.model.trust_remote_code,
-        cfg.model.load_in_4bit,
         cfg.model.lora_r,
         cfg.model.lora_alpha,
         cfg.model.lora_dropout,
@@ -159,10 +157,7 @@ def train(config_path: str) -> None:
             head_stats = {}
             calibration_iter = iter(dataloader)
             for _ in range(cfg.model.calibration_batches):
-                try:
-                    batch = next(calibration_iter)
-                except StopIteration:
-                    break
+                batch = next(calibration_iter)
 
                 batch.inputs.to(accelerator.device)
                 try:
@@ -171,26 +166,22 @@ def train(config_path: str) -> None:
 
                     all_maps = attn_manager.get_attentions()
                     for layer_idx, attn_logits in enumerate(all_maps):
-                        attn_probs = attn_logits_to_probs(attn_logits)
                         t2i_attn = extract_t2i_attn(attn_logits, batch, processor)
-                        for per_sample_attn, mask in zip(t2i_attn, batch.masks):
-                            if per_sample_attn is None:
-                                continue
-                            update_head_stats(head_stats, layer_idx, per_sample_attn, mask)
+                        update_head_stats(head_stats, layer_idx, t2i_attn, batch.masks)
+
+                        # for per_sample_attn, mask in zip(t2i_attn, batch.masks):
+                        #     if per_sample_attn is None:
+                        #         continue
                 finally:
                     attn_manager.clear()
 
-            grounding_heads, debug = select_grounding_heads(
-                head_stats,
-                top_mass_pct=cfg.model.top_mass_pct,
-                low_entropy_pct=cfg.model.low_entropy_pct,
-            )
+            grounding_heads, debug = select_grounding_heads(head_stats)
             accelerator.print(
                 f"Grounding head calibration done: selected={debug.get('selected', 0)} / {debug.get('num_candidates', 0)}"
             )
             if debug.get("num_candidates", 0) > 0:
                 accelerator.print(
-                    f"Thresholds: mass>={debug['mass_thresh']:.6f}, entropy<={debug['entropy_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
+                    f"Thresholds: mass>={debug['mass_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
                 )
             accelerator.print("Selected grounding heads by layer:", grounding_heads)
             attn_manager.attach(model, selected_heads_map=grounding_heads)

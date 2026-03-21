@@ -20,8 +20,6 @@ class DatasetConfig:
 @dataclass
 class ModelConfig:
     name: str
-    trust_remote_code: bool
-    load_in_4bit: bool
     lora_r: int
     lora_alpha: int
     lora_dropout: float
@@ -32,8 +30,6 @@ class ModelConfig:
     attention_layer_decay: float
     grounding_head_calibration: bool
     calibration_batches: int
-    top_mass_pct: float
-    low_entropy_pct: float
 
 
 @dataclass
@@ -48,7 +44,6 @@ class TrainConfig:
     lr: float
     weight_decay: float
     warmup_steps: int
-    mixed_precision: str
     log_every: int
     save_every: int
     wandb_enabled: bool
@@ -81,8 +76,6 @@ def load_config(path: str | Path) -> Config:
 
     model_cfg = ModelConfig(
         name=model.get("name", ""),
-        trust_remote_code=model.get("trust_remote_code", False),
-        load_in_4bit=model.get("load_in_4bit", False),
         lora_r=model.get("lora_r", 8),
         lora_alpha=model.get("lora_alpha", 16),
         lora_dropout=model.get("lora_dropout", 0.05),
@@ -93,8 +86,6 @@ def load_config(path: str | Path) -> Config:
         attention_layer_decay=model.get("attention_layer_decay", 0.2),
         grounding_head_calibration=model.get("grounding_head_calibration", False),
         calibration_batches=model.get("calibration_batches", 1),
-        top_mass_pct=model.get("top_mass_pct", 10.0),
-        low_entropy_pct=model.get("low_entropy_pct", 10.0),
     )
 
     train_cfg = TrainConfig(
@@ -108,7 +99,6 @@ def load_config(path: str | Path) -> Config:
         lr=train.get("lr", 1.0e-4),
         weight_decay=train.get("weight_decay", 0.0),
         warmup_steps=train.get("warmup_steps", 0),
-        mixed_precision=train.get("mixed_precision", "no"),
         log_every=train.get("log_every", 10),
         save_every=train.get("save_every", 500),
         wandb_enabled=train.get("wandb_enabled", False),

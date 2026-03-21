@@ -18,21 +18,17 @@ from attn_ft.attn_hooks import AttnHookManager
 
 def load_model_and_processor(
     model_name: str,
-    trust_remote_code: bool,
-    load_in_4bit: bool,
     lora_r: int,
     lora_alpha: int,
     lora_dropout: float,
     lora_target_modules: list[str],
 ) -> Tuple[torch.nn.Module, Any]:
     quantization_config = None
-    if load_in_4bit:
-        quantization_config = BitsAndBytesConfig(load_in_4bit=True)
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=trust_remote_code)
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
     if "qwen3-vl" in model_name.lower():
         model = AutoModelForImageTextToText.from_pretrained(
             model_name,
-            trust_remote_code=trust_remote_code,
+            trust_remote_code=True,
             dtype=torch.bfloat16,
             quantization_config=quantization_config,
             attn_implementation="eager",
@@ -40,7 +36,7 @@ def load_model_and_processor(
     else:
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
-            trust_remote_code=trust_remote_code,
+            trust_remote_code=True,
             dtype=torch.bfloat16,
             quantization_config=quantization_config,
             attn_implementation="eager",

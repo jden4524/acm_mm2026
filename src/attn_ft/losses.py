@@ -66,6 +66,7 @@ def soft_suppression_loss(
     pred: list[torch.Tensor],
     target: list[torch.Tensor],
     per_head: bool = False,
+    temp: float = 1.0,
 ) -> torch.Tensor | tuple[torch.Tensor, int]:
     losses = []
     if len(pred) == 0 or len(target) == 0:
@@ -77,10 +78,10 @@ def soft_suppression_loss(
             t = t.to(p.device).view(-1)
             
             log_sum_pos = torch.logsumexp(p*t, dim=-1)
-            log_sum_neg = torch.logsumexp(p*(1-t), dim=-1)
-
-            loss = torch.logaddexp(log_sum_pos, log_sum_neg) - log_sum_pos
+            log_sum_neg = torch.logsumexp(p*(1-t)/temp, dim=-1)
             
+            loss = torch.logaddexp(log_sum_pos, log_sum_neg) - log_sum_pos
+
             if per_head:
                 loss = loss.mean(dim=-1)
             else:
@@ -93,5 +94,5 @@ def soft_suppression_loss(
 
     loss_stack = torch.stack(losses)
     if per_head:
-        return loss_stack.mean(dim=0)
+        return loss_stack
     return loss_stack.sum()
