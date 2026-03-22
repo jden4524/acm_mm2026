@@ -13,13 +13,13 @@ model:
     -6: 0.2
     -8: 0.2
   attention_heads: []
-  guide_layers: midlate
+  guide_layers: earlymid
   attention_layer_decay: 0.1
   grounding_head_calibration: true
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-2B_headsel_expandedlora_lateL_suppresstemp
+  run_name: Qwen3-VL-2B_headsel_expandedlora_earlyL_suppresstemp
   loss: suppress
   loss_weight: 1
   seed: 42

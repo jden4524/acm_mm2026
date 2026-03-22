@@ -148,6 +148,10 @@ def train(config_path: str) -> None:
             keep_count = max(1, math.ceil(num_layers * 0.4))
             start_idx = num_layers - keep_count
             layer_ids = list(range(start_idx, num_layers))
+        elif cfg.model.guide_layers == "earlymid":
+            keep_count = max(1, math.ceil(num_layers * 0.5))
+            end_idx = keep_count
+            layer_ids = list(range(end_idx))
         else:
             layer_ids = list(range(num_layers))
 
