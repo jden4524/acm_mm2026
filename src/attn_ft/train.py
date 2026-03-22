@@ -36,6 +36,7 @@ from attn_ft.models import (
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
+
     wandb_run = "wandb" if cfg.train.wandb_enabled else None
     
     NUM_GPUS = int(os.environ.get("WORLD_SIZE", 1))
@@ -126,12 +127,12 @@ def train(config_path: str) -> None:
     accelerator.print("Using soft suppression loss for attention alignment")
 
     target_attn_layer = cfg.model.attention_layers
-    if cfg.model.use_all_attention_layers:
-        accelerator.print(
-            f"Using all attention layers for supervision with exponential decay={cfg.model.attention_layer_decay}"
-        )
-    else:
-        accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
+    if cfg.model.guide_layers == "all":
+        accelerator.print(f"Using all attention layers with exponential decay={cfg.model.attention_layer_decay}")
+    elif cfg.model.guide_layers == "midlate":
+        accelerator.print(f"Using mid-to-late attention layers with exponential decay={cfg.model.attention_layer_decay}")
+    # else:
+    #     accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
 
     layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
 
@@ -139,28 +140,28 @@ def train(config_path: str) -> None:
         if num_layers in layer_schedule_cache:
             return layer_schedule_cache[num_layers]
 
-        if not cfg.model.use_all_attention_layers:
-            if isinstance(target_attn_layer, int):
-                layer_ids = [target_attn_layer]
-            else:
-                layer_ids = list(target_attn_layer)
-            layer_weights = [1.0] * len(layer_ids)
-            layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
-            return layer_ids, layer_weights
+        if num_layers <= 0:
+            layer_schedule_cache[num_layers] = ([], [])
+            return [], []
+
+        if cfg.model.guide_layers == "midlate":
+            keep_count = max(1, math.ceil(num_layers * 0.4))
+            start_idx = num_layers - keep_count
+            layer_ids = list(range(start_idx, num_layers))
+        else:
+            layer_ids = list(range(num_layers))
 
         raw_weights = []
-        for layer_idx in range(num_layers):
+        for layer_idx in layer_ids:
             distance_from_last = (num_layers - 1) - layer_idx
             raw_weights.append(math.exp(-cfg.model.attention_layer_decay * distance_from_last))
 
         weight_sum = sum(raw_weights)
         if weight_sum == 0:
-            layer_ids = list(range(num_layers))
-            layer_weights = [1.0 / num_layers] * num_layers
+            layer_weights = [1.0 / len(layer_ids)] * len(layer_ids)
             layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
             return layer_ids, layer_weights
 
-        layer_ids = list(range(num_layers))
         layer_weights = [w / weight_sum for w in raw_weights]
         layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
         return layer_ids, layer_weights
@@ -172,6 +173,9 @@ def train(config_path: str) -> None:
             accelerator.print("Running grounding head calibration forward pass...")
             model.eval()
             head_stats = {}
+            num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
+            scheduled_layer_ids, _ = build_layer_schedule(num_model_layers)
+            scheduled_layer_id_set = set(scheduled_layer_ids)
             calibration_iter = iter(dataloader)
             for _ in range(cfg.model.calibration_batches):
                 batch = next(calibration_iter)
@@ -183,16 +187,18 @@ def train(config_path: str) -> None:
 
                     all_maps = attn_manager.get_attentions()
                     for layer_idx, attn_logits in enumerate(all_maps):
+                        if layer_idx not in scheduled_layer_id_set:
+                            continue
                         t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch)
                         update_head_stats(head_stats, layer_idx, t2i_attn, valid_masks)
-
-                        # for per_sample_attn, mask in zip(t2i_attn, batch.masks):
-                        #     if per_sample_attn is None:
-                        #         continue
+                        
                 finally:
                     attn_manager.clear()
 
-            grounding_heads, debug = select_grounding_heads(head_stats)
+            grounding_heads, debug = select_grounding_heads(
+                head_stats,
+                allowed_layer_ids=scheduled_layer_ids,
+            )
             accelerator.print(
                 f"Grounding head calibration done: selected={debug.get('selected', 0)} / {debug.get('num_candidates', 0)}"
             )

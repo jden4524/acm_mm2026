@@ -26,7 +26,7 @@ class ModelConfig:
     lora_target_modules: List[str]
     attention_layers: Dict[int, float]
     attention_heads: List[int]
-    use_all_attention_layers: bool
+    guide_layers: str
     attention_layer_decay: float
     grounding_head_calibration: bool
     calibration_batches: int
@@ -50,6 +50,7 @@ class TrainConfig:
     wandb_project: str
     wandb_entity: Optional[str]
     wandb_run_name: Optional[str]
+    local_test: bool
 
 
 @dataclass
@@ -82,7 +83,7 @@ def load_config(path: str | Path) -> Config:
         lora_target_modules=model.get("lora_target_modules", []),
         attention_layers=model.get("attention_layers", {-2:1.0}),
         attention_heads=model.get("attention_heads", []),
-        use_all_attention_layers=model.get("use_all_attention_layers", False),
+        guide_layers=model.get("guide_layers", "midlate"),
         attention_layer_decay=model.get("attention_layer_decay", 0.2),
         grounding_head_calibration=model.get("grounding_head_calibration", False),
         calibration_batches=model.get("calibration_batches", 1),
@@ -105,6 +106,13 @@ def load_config(path: str | Path) -> Config:
         wandb_project=train.get("wandb_project", "attn_ft"),
         wandb_entity=train.get("wandb_entity"),
         wandb_run_name=train.get("wandb_run_name"),
+        local_test=train.get("local_test", False),
     )
+
+    if train_cfg.local_test:
+        model_cfg.calibration_batches = 4
+        train_cfg.micro_batch_size = 2
+        train_cfg.effective_batch_size = 2
+        train_cfg.wandb_enabled = False
 
     return Config(dataset=dataset_cfg, model=model_cfg, train=train_cfg)

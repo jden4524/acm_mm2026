@@ -79,7 +79,8 @@ def _elbow_threshold(values: torch.Tensor, prefer: str, threshold_pct: float = 0
     return float(sorted_values[elbow_idx].item()), elbow_idx
 
 
-def select_grounding_heads(head_stats):
+def select_grounding_heads(head_stats, allowed_layer_ids: list[int] | None = None):
+    allowed_layer_set = set(allowed_layer_ids) if allowed_layer_ids is not None else None
     candidates = [
         {
             "layer_idx": int(layer_idx),
@@ -88,6 +89,7 @@ def select_grounding_heads(head_stats):
             "alignment": float(alignment.item()),
         }
         for layer_idx, stats in head_stats.items()
+        if allowed_layer_set is None or int(layer_idx) in allowed_layer_set
         for head_idx, (mass, alignment) in enumerate(
             zip(
                 stats["mass_sum"] / stats["count"].clamp_min(1),
@@ -102,7 +104,7 @@ def select_grounding_heads(head_stats):
     mass_values = torch.tensor([c["mass"] for c in candidates])
     alignment_values = torch.tensor([c["alignment"] for c in candidates])
 
-    mass_thresh, mass_elbow_idx = _elbow_threshold(mass_values, prefer="high", threshold_pct=0.6)
+    mass_thresh, mass_elbow_idx = _elbow_threshold(mass_values, prefer="high", threshold_pct=1.0)
     alignment_thresh, alignment_elbow_idx = _elbow_threshold(alignment_values, prefer="low", threshold_pct=1.0)
 
     selected = [c for c in candidates if c["mass"] >= mass_thresh and c["alignment"] <= alignment_thresh]
