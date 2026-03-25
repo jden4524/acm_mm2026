@@ -90,7 +90,7 @@ def train(config_path: str) -> None:
 
     dataset = load_dataset(cfg.dataset.hf_dataset_id, split="train")
 
-    collator = AttnSupervisionCollator(processor=processor)
+    collator = AttnSupervisionCollator(processor=processor, qa=cfg.dataset.qa)
 
     dataloader = DataLoader(
         dataset,

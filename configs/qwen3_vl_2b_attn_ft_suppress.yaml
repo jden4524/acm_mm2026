@@ -1,5 +1,6 @@
 dataset:
-  hf_dataset_id: Jackie2235/flickr30k_attn_ft
+  hf_dataset_id: Jackie2235/RLAIF-V-SEG
+  qa: true
 
 model:
   name: Qwen/Qwen3-VL-2B-Instruct
@@ -13,24 +14,24 @@ model:
     -6: 0.2
     -8: 0.2
   attention_heads: []
-  guide_layers: earlymid
+  guide_layers: midlate
   attention_layer_decay: 0.1
   grounding_head_calibration: true
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-2B_headsel_expandedlora_earlyL_suppresstemp
+  run_name: Qwen3-VL-2B_headsel_expandedlora_lateL_suppresstemp_RLAIF
   loss: suppress
   loss_weight: 1
   seed: 42
-  micro_batch_size: 32
-  effective_batch_size: 32
+  micro_batch_size: 16
+  effective_batch_size: 16
   num_epochs: 1
   lr: 5.0e-5
   weight_decay: 0.1
-  warmup_steps: 200
-  log_every: 20
-  save_every: 2000
+  warmup_steps: 50
+  log_every: 5
+  save_every: 600
   wandb_enabled: true
   wandb_project: attn_ft
   local_test: false

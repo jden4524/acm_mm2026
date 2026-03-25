@@ -119,39 +119,44 @@ class AttnBatch:
     token_spans: List[Optional[slice]]
     image_token_indices: List[torch.Tensor]
     valid_supervision_indices: List[int]
-    captions: List[str]
-    image_stems: List[Optional[str]]
+    answers: List[str]
+    # image_stems: List[Optional[str]]
     labels: Optional[torch.Tensor] = None
 
 
 class AttnSupervisionCollator:
     def __init__(
         self,
-        processor: Optional[Any]
+        processor: Optional[Any],
+        qa: Optional[bool] = False,
     ) -> None:
         self.processor = processor
+        self.qa = qa
 
     def __call__(self, batch: List[Dict[str, Any]]) -> AttnBatch:
         images = [b["image"] for b in batch]
-        captions = [b["caption"] for b in batch]
         masks_list = [b["mask"] for b in batch]
         phrases_list = [b["phrase"] for b in batch]
-        image_stems = [b["image_stem"] for b in batch]
-
+        if self.qa:
+            answers = [b["answer"] for b in batch]
+            questions = [b["question"] for b in batch]
+        else:
+            answers = [b["caption"] for b in batch]
+            questions = ["What is in this image?"] * len(batch)
 
         prompts = []
-        for cap, img in zip(captions, images):
+        for q, a, img in zip(questions, answers, images):
             message = [{
                         "role": "user",
                         "content": [
                             {"type": "image", "image": img},
-                            {"type": "text", "text": "What is in this image?"},
+                            {"type": "text", "text": q},
                         ],
                     },
                         {
                         "role": "assistant",
                         "content": [
-                            {"type": "text", "text": cap},
+                            {"type": "text", "text": a},
                         ],
                     }]
             prompt = self.processor.apply_chat_template(message,
@@ -162,7 +167,7 @@ class AttnSupervisionCollator:
         inputs = self.processor(text=prompts, images=images, return_tensors="pt", padding=True)
 
         tokenized = self.processor.tokenizer(
-            captions,
+            answers,
             return_offsets_mapping=True,
             padding=True,
             truncation=True,
@@ -186,7 +191,7 @@ class AttnSupervisionCollator:
         labels = inputs["input_ids"].clone()
 
         for i in range(bsz):
-            caption = captions[i]
+            answer = answers[i]
             mask_img = masks_list[i]
             phrase = phrases_list[i]
             vision_grid_size = (inputs.image_grid_thw[i,1:] / 2).int().tolist() # _infer_vision_grid_size(self.processor, img_size=images[i].size)
@@ -197,7 +202,7 @@ class AttnSupervisionCollator:
             padding_mask = (inputs["input_ids"][i] == pad_token_id)
             labels[i][padding_mask] = -100
 
-            span = _find_phrase_span(caption, phrase)
+            span = _find_phrase_span(answer, phrase)
             if span is None:
                 token_spans.append(None)
                 continue
@@ -216,7 +221,7 @@ class AttnSupervisionCollator:
             token_spans=token_spans,
             image_token_indices=image_token_indices,
             valid_supervision_indices=valid_supervision_indices,
-            captions=captions,
-            image_stems=image_stems,
+            answers=answers,
+            # image_stems=image_stems,
             labels=labels
         )

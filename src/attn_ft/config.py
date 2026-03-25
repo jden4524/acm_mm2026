@@ -15,6 +15,7 @@ class DatasetConfig:
     image_field: str
     mask_root: str
     max_samples: Optional[int]
+    qa: bool
 
 
 @dataclass
@@ -72,7 +73,8 @@ def load_config(path: str | Path) -> Config:
         caption_field=dset.get("caption_field", "caption"),
         image_field=dset.get("image_field", "image"),
         mask_root=dset.get("mask_root", ""),
-        max_samples=dset.get("max_samples")
+        max_samples=dset.get("max_samples"),
+        qa=dset.get("qa", False),
     )
 
     model_cfg = ModelConfig(
