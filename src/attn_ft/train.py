@@ -318,7 +318,7 @@ def train(config_path: str) -> None:
 
                     if pred_chunks and merged_masks and head_weight_chunks:
                         merged_preds = [torch.cat(chunks, dim=0) for chunks in pred_chunks]
-                        per_head_loss = attn_align_loss(merged_preds, merged_masks, per_head=True, temp=5)
+                        per_head_loss = attn_align_loss(merged_preds, merged_masks, per_head=True, temp=2)
                         head_weights = torch.cat(head_weight_chunks).to(per_head_loss.dtype)
                         align_loss_sum_all_l = (per_head_loss * head_weights.unsqueeze(0)).sum()
                     
