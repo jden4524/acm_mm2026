@@ -13,7 +13,7 @@ import torch
 import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim import AdamW
-from datasets import load_dataset
+from datasets import interleave_datasets, load_dataset
 from torch.utils.data import DataLoader
 from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
 from tqdm.auto import tqdm
@@ -88,9 +88,24 @@ def train(config_path: str) -> None:
     attn_manager = AttnHookManager()
     attn_manager.attach(model)
 
-    dataset = load_dataset(cfg.dataset.hf_dataset_id, split="train")
+    loaded_datasets = []
+    for dataset_id in cfg.dataset.hf_dataset_id:
+        loaded = load_dataset(dataset_id, split=cfg.dataset.split)
+        if "answer" not in loaded.column_names:
+            loaded = loaded.rename_column("caption", "answer")
+        if "question" not in loaded.column_names:
+            loaded = loaded.add_column("question", ["What is in this image?"] * len(loaded))
+        loaded_datasets.append(loaded)
+    if len(loaded_datasets) == 1:
+        dataset = loaded_datasets[0]
+    else:
+        # inverse sampling based on dataset sizes; can be customized with cfg if needed
+        probabilities = [1.0 / len(dset) for dset in loaded_datasets]
+        total = sum(probabilities)
+        probabilities = [p / total for p in probabilities]
+        dataset = interleave_datasets(loaded_datasets, probabilities=probabilities, stopping_strategy="first_exhausted")
 
-    collator = AttnSupervisionCollator(processor=processor, qa=cfg.dataset.qa)
+    collator = AttnSupervisionCollator(processor=processor)
 
     dataloader = DataLoader(
         dataset,

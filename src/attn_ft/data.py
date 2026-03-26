@@ -54,62 +54,7 @@ def _resize_mask_to_grid(mask: Image.Image, grid_size: Tuple[int, int]) -> torch
     arr = np.array(resized, dtype=np.float32)
     return torch.from_numpy((arr > 0).astype(np.float32))
 
-class Flickr30kSamDataset(Dataset):
-    def __init__(
-        self,
-        hf_dataset_id: str,
-        split: str,
-        caption_field: str,
-        image_field: str,
-        mask_root: str,
-        max_samples: Optional[int] = None,
-    ) -> None:
-        self.dataset = load_dataset(hf_dataset_id, split=split, trust_remote_code=True)
-        if max_samples is not None:
-            self.dataset = self.dataset.select(range(max_samples))
 
-        self.caption_field = caption_field
-        self.image_field = image_field
-        self.mask_root = Path(mask_root)
-        self.flattened_map: List[Tuple[int, Path, str]] = []
-
-        for idx in range(len(self.dataset)):
-            sample = self.dataset[idx]
-            image = sample[self.image_field]
-            filename = sample.get("filename") or getattr(image, "filename", None)
-            if not filename:
-                continue
-            image_stem = Path(filename).stem
-            folder = self.mask_root / image_stem
-            if not folder.exists():
-                continue
-            mask_files = sorted(
-                p for p in folder.iterdir() if p.suffix.lower() in {".png", ".jpg", ".jpeg"}
-            )
-            for mask_path in mask_files:
-                self.flattened_map.append((idx, mask_path, image_stem))
-
-    def __len__(self) -> int:
-        return len(self.flattened_map)
-
-    def __getitem__(self, idx: int) -> Dict[str, Any]:
-        dataset_idx, mask_path, image_stem = self.flattened_map[idx]
-        sample = self.dataset[dataset_idx]
-        image = sample[self.image_field]
-        mask = Image.open(mask_path).convert("L")
-        phrase = mask_path.stem
-        caption = _extract_caption(
-            sample[self.caption_field],
-            phrases=[phrase],
-        )
-
-        return {
-            "image": image,
-            "caption": caption,
-            "mask": mask,
-            "phrase": phrase,
-            "image_stem": image_stem,
-        }
 
 
 @dataclass
@@ -128,21 +73,16 @@ class AttnSupervisionCollator:
     def __init__(
         self,
         processor: Optional[Any],
-        qa: Optional[bool] = False,
     ) -> None:
         self.processor = processor
-        self.qa = qa
 
     def __call__(self, batch: List[Dict[str, Any]]) -> AttnBatch:
         images = [b["image"] for b in batch]
         masks_list = [b["mask"] for b in batch]
         phrases_list = [b["phrase"] for b in batch]
-        if self.qa:
-            answers = [b["answer"] for b in batch]
-            questions = [b["question"] for b in batch]
-        else:
-            answers = [b["caption"] for b in batch]
-            questions = ["What is in this image?"] * len(batch)
+
+        answers = [str(sample["answer"]) for sample in batch]
+        questions = [str(sample["question"]) for sample in batch]
 
         prompts = []
         for q, a, img in zip(questions, answers, images):

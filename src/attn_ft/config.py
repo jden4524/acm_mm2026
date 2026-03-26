@@ -9,13 +9,12 @@ import yaml
 
 @dataclass
 class DatasetConfig:
-    hf_dataset_id: str
+    hf_dataset_id: List[str]
     split: str
     caption_field: str
     image_field: str
     mask_root: str
     max_samples: Optional[int]
-    qa: bool
 
 
 @dataclass
@@ -67,14 +66,24 @@ def load_config(path: str | Path) -> Config:
     model = raw.get("model", {})
     train = raw.get("train", {})
 
+    raw_hf_dataset_id = dset.get("hf_dataset_id", [])
+    if isinstance(raw_hf_dataset_id, str):
+        hf_dataset_ids = [raw_hf_dataset_id]
+    elif isinstance(raw_hf_dataset_id, list):
+        hf_dataset_ids = [str(dataset_id) for dataset_id in raw_hf_dataset_id if str(dataset_id)]
+    else:
+        raise TypeError("dataset.hf_dataset_id must be a string or a list of strings")
+
+    if not hf_dataset_ids:
+        raise ValueError("dataset.hf_dataset_id must contain at least one dataset id")
+
     dataset_cfg = DatasetConfig(
-        hf_dataset_id=dset.get("hf_dataset_id", ""),
-        split=dset.get("split", ""),
+        hf_dataset_id=hf_dataset_ids,
+        split=dset.get("split", "train"),
         caption_field=dset.get("caption_field", "caption"),
         image_field=dset.get("image_field", "image"),
         mask_root=dset.get("mask_root", ""),
         max_samples=dset.get("max_samples"),
-        qa=dset.get("qa", False),
     )
 
     model_cfg = ModelConfig(
