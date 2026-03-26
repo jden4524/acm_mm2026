@@ -7,7 +7,7 @@ model:
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
-  lora_target_modules: [q_proj, k_proj, v_proj, visual.merger.linear_fc2, deepstack_merger_list.*.linear_fc2]
+  lora_target_modules: [q_proj, k_proj]
   attention_layers: 
     -2: 0.4
     -4: 0.2
@@ -20,13 +20,13 @@ model:
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-2B_headsel_expandedlora_lateL_suppresstemp_RLAIF
+  run_name: Qwen3-VL-2B_headsel_lateL_suppresstemp_RLAIF
   loss: suppress
-  loss_weight: 1
+  loss_weight: 4
   seed: 42
   micro_batch_size: 8
   effective_batch_size: 16
-  num_epochs: 1
+  num_epochs: 2
   lr: 5.0e-5
   weight_decay: 0.1
   warmup_steps: 50
