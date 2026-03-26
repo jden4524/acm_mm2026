@@ -20,7 +20,7 @@ model:
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-2B_headsel_lateL_suppresstemp_RLAIF
+  run_name: Qwen3-VL-2B_headsel_RLAIF_2epoch
   loss: suppress
   loss_weight: 4
   seed: 42
@@ -29,9 +29,9 @@ train:
   num_epochs: 2
   lr: 5.0e-5
   weight_decay: 0.1
-  warmup_steps: 50
-  log_every: 5
-  save_every: 800
+  warmup_steps: 100
+  log_every: 10
+  save_every: 1000
   wandb_enabled: true
   wandb_project: attn_ft
   local_test: false
