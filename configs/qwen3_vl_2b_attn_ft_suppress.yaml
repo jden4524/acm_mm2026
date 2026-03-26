@@ -24,14 +24,14 @@ train:
   loss: suppress
   loss_weight: 1
   seed: 42
-  micro_batch_size: 16
+  micro_batch_size: 8
   effective_batch_size: 16
   num_epochs: 1
   lr: 5.0e-5
   weight_decay: 0.1
   warmup_steps: 50
   log_every: 5
-  save_every: 600
+  save_every: 800
   wandb_enabled: true
   wandb_project: attn_ft
   local_test: false

@@ -24,7 +24,9 @@ def load_model_and_processor(
     lora_target_modules: list[str],
 ) -> Tuple[torch.nn.Module, Any]:
     quantization_config = None
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    min_pixels = 256 * 28 * 28
+    max_pixels = 1024 * 28 * 28
+    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True,min_pixels=min_pixels, max_pixels=max_pixels)
     if "qwen3-vl" in model_name.lower():
         model = AutoModelForImageTextToText.from_pretrained(
             model_name,
