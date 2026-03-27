@@ -6,7 +6,7 @@ model:
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
-  lora_target_modules: [q_proj, k_proj, v_proj, visual.merger.linear_fc2, deepstack_merger_list.*.linear_fc2]
+  lora_target_modules: [visual.merger.linear_fc2, deepstack_merger_list.*.linear_fc2]
   attention_layers: 
     -2: 0.4
     -4: 0.2
@@ -19,14 +19,14 @@ model:
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-2B_headsel_RLAIF_Flickr
+  run_name: Qwen3-VL-2B_headsel_RLAIF_Flickr_mergerOnly
   loss: suppress
   loss_weight: 1
   seed: 42
   micro_batch_size: 8
   effective_batch_size: 32
   num_epochs: 1
-  lr: 5.0e-5
+  lr: 1.0e-4
   weight_decay: 0.1
   warmup_steps: 100
   log_every: 10

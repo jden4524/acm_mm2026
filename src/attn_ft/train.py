@@ -100,7 +100,7 @@ def train(config_path: str) -> None:
         dataset = loaded_datasets[0]
     else:
         # inverse sampling based on dataset sizes; can be customized with cfg if needed
-        probabilities = [1.0 / len(dset) for dset in loaded_datasets]
+        probabilities = [len(dset) for dset in loaded_datasets]
         total = sum(probabilities)
         probabilities = [p / total for p in probabilities]
         dataset = interleave_datasets(loaded_datasets, probabilities=probabilities, stopping_strategy="first_exhausted")
