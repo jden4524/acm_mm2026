@@ -22,6 +22,7 @@ def load_model_and_processor(
     lora_alpha: int,
     lora_dropout: float,
     lora_target_modules: list[str],
+    lora_layer_ids: Optional[list[int]] = None,
 ) -> Tuple[torch.nn.Module, Any]:
     quantization_config = None
     min_pixels = 256 * 28 * 28
@@ -53,6 +54,7 @@ def load_model_and_processor(
             lora_alpha=lora_alpha,
             lora_dropout=lora_dropout,
             target_modules=lora_target_modules,
+            layers_to_transform=lora_layer_ids,
             bias="none",
             task_type="CAUSAL_LM",
         )

@@ -15,7 +15,7 @@ from accelerate import Accelerator
 from torch.optim import AdamW
 from datasets import interleave_datasets, load_dataset
 from torch.utils.data import DataLoader
-from transformers import get_cosine_with_hard_restarts_schedule_with_warmup
+from transformers import AutoConfig, get_cosine_with_hard_restarts_schedule_with_warmup
 from tqdm.auto import tqdm
 import os
 
@@ -36,6 +36,54 @@ from attn_ft.models import (
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
+
+    layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
+
+    def build_layer_schedule(num_layers: int) -> tuple[list[int], list[float]]:
+        if num_layers in layer_schedule_cache:
+            return layer_schedule_cache[num_layers]
+
+        if num_layers <= 0:
+            layer_schedule_cache[num_layers] = ([], [])
+            return [], []
+
+        if cfg.model.guide_layers == "midlate":
+            keep_count = max(1, math.ceil(num_layers * 0.4))
+            start_idx = num_layers - keep_count
+            layer_ids = list(range(start_idx, num_layers))
+        elif cfg.model.guide_layers == "earlymid":
+            keep_count = max(1, math.ceil(num_layers * 0.5))
+            end_idx = keep_count
+            layer_ids = list(range(end_idx))
+        else:
+            layer_ids = list(range(num_layers))
+
+        raw_weights = []
+        for layer_idx in layer_ids:
+            distance_from_last = (num_layers - 1) - layer_idx
+            raw_weights.append(math.exp(-cfg.model.attention_layer_decay * distance_from_last))
+
+        weight_sum = sum(raw_weights)
+        if weight_sum == 0:
+            layer_weights = [1.0 / len(layer_ids)] * len(layer_ids)
+            layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
+            return layer_ids, layer_weights
+
+        layer_weights = [w / weight_sum for w in raw_weights]
+        layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
+        return layer_ids, layer_weights
+
+    model_cfg = AutoConfig.from_pretrained(cfg.model.name, trust_remote_code=True)
+    if hasattr(model_cfg, "num_hidden_layers") and model_cfg.num_hidden_layers is not None:
+        num_language_layers = int(model_cfg.num_hidden_layers)
+    elif hasattr(model_cfg, "text_config") and getattr(model_cfg.text_config, "num_hidden_layers", None) is not None:
+        num_language_layers = int(model_cfg.text_config.num_hidden_layers)
+    else:
+        raise ValueError(
+            f"Could not infer number of language layers from config for model '{cfg.model.name}'"
+        )
+
+    layer_ids, _ = build_layer_schedule(num_language_layers)
 
     wandb_run = "wandb" if cfg.train.wandb_enabled else None
     
@@ -76,13 +124,14 @@ def train(config_path: str) -> None:
             },
         }
         accelerator.init_trackers(**wandb_kwargs)
-
+    
     model, processor = load_model_and_processor(
         cfg.model.name,
         cfg.model.lora_r,
         cfg.model.lora_alpha,
         cfg.model.lora_dropout,
         cfg.model.lora_target_modules,
+        lora_layer_ids=layer_ids,
     )
 
     attn_manager = AttnHookManager()
@@ -148,42 +197,6 @@ def train(config_path: str) -> None:
         accelerator.print(f"Using mid-to-late attention layers with exponential decay={cfg.model.attention_layer_decay}")
     # else:
     #     accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
-
-    layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
-
-    def build_layer_schedule(num_layers: int) -> tuple[list[int], list[float]]:
-        if num_layers in layer_schedule_cache:
-            return layer_schedule_cache[num_layers]
-
-        if num_layers <= 0:
-            layer_schedule_cache[num_layers] = ([], [])
-            return [], []
-
-        if cfg.model.guide_layers == "midlate":
-            keep_count = max(1, math.ceil(num_layers * 0.4))
-            start_idx = num_layers - keep_count
-            layer_ids = list(range(start_idx, num_layers))
-        elif cfg.model.guide_layers == "earlymid":
-            keep_count = max(1, math.ceil(num_layers * 0.5))
-            end_idx = keep_count
-            layer_ids = list(range(end_idx))
-        else:
-            layer_ids = list(range(num_layers))
-
-        raw_weights = []
-        for layer_idx in layer_ids:
-            distance_from_last = (num_layers - 1) - layer_idx
-            raw_weights.append(math.exp(-cfg.model.attention_layer_decay * distance_from_last))
-
-        weight_sum = sum(raw_weights)
-        if weight_sum == 0:
-            layer_weights = [1.0 / len(layer_ids)] * len(layer_ids)
-            layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
-            return layer_ids, layer_weights
-
-        layer_weights = [w / weight_sum for w in raw_weights]
-        layer_schedule_cache[num_layers] = (layer_ids, layer_weights)
-        return layer_ids, layer_weights
 
     if cfg.model.grounding_head_calibration:
         if accelerator.num_processes > 1:
