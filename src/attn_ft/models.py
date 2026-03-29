@@ -55,6 +55,7 @@ def load_model_and_processor(
             lora_dropout=lora_dropout,
             target_modules=lora_target_modules,
             layers_to_transform=lora_layer_ids,
+            layers_pattern=r"(?:language_model|model)\.layers",
             bias="none",
             task_type="CAUSAL_LM",
         )
