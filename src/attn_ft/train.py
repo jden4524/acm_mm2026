@@ -143,12 +143,12 @@ def train(config_path: str) -> None:
         if "answer" not in loaded.column_names:
             loaded = loaded.rename_column("caption", "answer")
         if "question" not in loaded.column_names:
-            loaded = loaded.add_column("question", ["What is in this image?"] * len(loaded))
+            loaded = loaded.add_column("question", ["Describe the image."] * len(loaded))
         loaded_datasets.append(loaded)
     if len(loaded_datasets) == 1:
         dataset = loaded_datasets[0]
     else:
-        # inverse sampling based on dataset sizes; can be customized with cfg if needed
+        # sampling based on dataset sizes
         probabilities = [len(dset) for dset in loaded_datasets]
         total = sum(probabilities)
         probabilities = [p / total for p in probabilities]

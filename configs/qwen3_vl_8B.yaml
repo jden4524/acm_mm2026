@@ -6,7 +6,7 @@ model:
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
-  lora_target_modules: [q_proj,v_proj]
+  lora_target_modules: [k_proj,q_proj]
   attention_layers: 
     -2: 0.4
     -4: 0.2
@@ -19,11 +19,11 @@ model:
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-8B_headsel_RLAIF_Flickr_midlateQV
+  run_name: Qwen3-VL-8B_headsel_RLAIF_Flickr_midlateKQ
   loss: suppress
   loss_weight: 1
   seed: 42
-  micro_batch_size: 8
+  micro_batch_size: 4
   effective_batch_size: 32
   num_epochs: 1
   lr: 1.0e-4
