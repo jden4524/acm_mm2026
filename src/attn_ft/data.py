@@ -73,8 +73,10 @@ class AttnSupervisionCollator:
     def __init__(
         self,
         processor: Optional[Any],
+        model_name: str,
     ) -> None:
         self.processor = processor
+        self.model_name = model_name
 
     def __call__(self, batch: List[Dict[str, Any]]) -> AttnBatch:
         images = [b["image"] for b in batch]
@@ -85,33 +87,52 @@ class AttnSupervisionCollator:
         questions = [str(sample["question"]) for sample in batch]
 
         prompts = []
-        for q, a, img in zip(questions, answers, images):
-            message = [{
-                        "role": "user",
-                        "content": [
-                            {"type": "image", "image": img},
-                            {"type": "text", "text": q},
-                        ],
-                    },
-                        {
-                        "role": "assistant",
-                        "content": [
-                            {"type": "text", "text": a},
-                        ],
-                    }]
-            prompt = self.processor.apply_chat_template(message,
-                    add_generation_prompt=False,
-                    tokenize=False)
-            prompts.append(prompt)
+        if "qwen" in self.model_name.lower():
+            for q, a, img in zip(questions, answers, images):
+                message = [{
+                            "role": "user",
+                            "content": [
+                                {"type": "image", "image": img},
+                                {"type": "text", "text": q},
+                            ],
+                        },
+                            {
+                            "role": "assistant",
+                            "content": [
+                                {"type": "text", "text": a},
+                            ],
+                        }]
+                prompt = self.processor.apply_chat_template(message,
+                        add_generation_prompt=False,
+                        tokenize=False)
+                prompts.append(prompt)
+            
+            
+        elif "minicpm" in self.model_name.lower():
+            for q, a, img in zip(questions, answers, images):
+                message = [{
+                            "role": "user",
+                            "content": [q+'(<image>./</image>)\n'],
+                        },
+                            {
+                            "role": "assistant",
+                            "content": [a],
+                        }]
+                prompt = self.processor.apply_chat_template(message,
+                        add_generation_prompt=False,
+                        tokenize=False)
+                prompts.append(prompt)
+                
                 
         inputs = self.processor(text=prompts, images=images, return_tensors="pt", padding=True)
-
         tokenized = self.processor.tokenizer(
-            answers,
-            return_offsets_mapping=True,
-            padding=True,
-            truncation=True,
-        )
+                answers,
+                return_offsets_mapping=True,
+                padding=True,
+                truncation=True,
+            )
+
+
         offsets = tokenized["offset_mapping"]
         assistant_idx = (inputs["input_ids"] == 77091).nonzero(as_tuple=True)[1].tolist()
         img_token_id = self.processor.tokenizer.convert_tokens_to_ids("<|image_pad|>")
@@ -162,6 +183,5 @@ class AttnSupervisionCollator:
             image_token_indices=image_token_indices,
             valid_supervision_indices=valid_supervision_indices,
             answers=answers,
-            # image_stems=image_stems,
             labels=labels
         )

@@ -19,6 +19,8 @@ from transformers import AutoConfig, get_cosine_with_hard_restarts_schedule_with
 from tqdm.auto import tqdm
 import os
 
+from transformers.convert_graph_to_onnx import args
+
 from attn_ft.attn_hooks import (
     AttnHookManager,
     extract_t2i_attn_valid,
@@ -205,7 +207,10 @@ def train(config_path: str) -> None:
             accelerator.print("Running grounding head calibration forward pass...")
             model.eval()
             head_stats = {}
-            num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
+            if "qwen" in config_path.lower():
+                num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
+            elif "minicpm" in config_path.lower():
+                num_model_layers = len(accelerator.unwrap_model(model).llm.model.layers)
             scheduled_layer_ids, _ = build_layer_schedule(num_model_layers)
             scheduled_layer_id_set = set(scheduled_layer_ids)
             calibration_iter = iter(dataloader)

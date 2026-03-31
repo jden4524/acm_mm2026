@@ -46,6 +46,7 @@ def load_model_and_processor(
             attn_implementation="eager",
         )
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+        processor.tokenizer.chat_template = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}"
     else:
         raise ValueError(f"Unsupported model name: {model_name}")
 

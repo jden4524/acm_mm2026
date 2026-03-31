@@ -150,9 +150,9 @@ class AttnHookManager:
         self.clear()  # Ensure no stale data
         self.selected_heads_map = selected_heads_map
         # for qwen3-vl
-        if isinstance(model, transformers.Qwen3VLForConditionalGeneration):
+        if isinstance(model.base_model.model, transformers.Qwen3VLForConditionalGeneration):
             layers = model.model.model.language_model.layers  # qwen3-vl specific path to transformer layers
-        elif isinstance(model, transformers.LlamaPreTrainedModel): # minicpm
+        elif isinstance(model.base_model.model, transformers.LlamaPreTrainedModel): # minicpm
             layers = model.llm.model.layers  
         else:
             raise ValueError(f"Unsupported model type for AttnHookManager: {type(model)}")
