@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 import json
 
+DATA_MAPPING_PATH = Path(__file__).with_name("data_mapping.json")
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Merge PEFT LoRA weights into base model.")
     parser.add_argument(
@@ -42,55 +44,13 @@ def load_and_save(adapter_path, output_path):
     return checkpoint_name, checkpoint_dir
     
 
-data_mapping = {
-            "MMBench_DEV_EN_V11": {
-                "class": "ImageMCQDataset",
-                "dataset": "MMBench_DEV_EN_V11"
-            },
-            "MMVP": {
-                "class": "ImageMCQDataset",
-                "dataset": "MMVP"
-            },
-            "BLINK": {
-                "class": "ImageMCQDataset",
-                "dataset": "BLINK"
-            },
-            "VStarBench": {
-                "class": "ImageMCQDataset",
-                "dataset": "VStarBench"
-            },
-            "NaturalBenchDataset": {
-                "class": "ImageMCQDataset",
-                "dataset": "NaturalBenchDataset"
-            },
-            "VisOnlyQA-VLMEvalKit": {
-                "class": "ImageMCQDataset",
-                "dataset": "VisOnlyQA-VLMEvalKit"
-            },
-            "MME": {
-            "class": "ImageYORNDataset",
-            "dataset": "MME"
-            },
-            "HallusionBench": {
-            "class": "ImageYORNDataset",
-            "dataset": "HallusionBench"
-            },
-            "POPE": {
-            "class": "ImageYORNDataset",
-            "dataset": "POPE"
-            },
-            "AMBER": {
-            "class": "ImageYORNDataset",
-            "dataset": "AMBER"
-            },
-            "GQA_TestDev_Balanced": {
-                "class": "ImageVQADataset",
-                "dataset": "GQA_TestDev_Balanced"
-            }
-}
+def load_data_mapping(mapping_path: Path = DATA_MAPPING_PATH) -> dict:
+    with open(mapping_path, "r") as f:
+        return json.load(f)
 
 
 def write_eval_json(checkpoint_name, checkpoint_dir):
+    data_mapping = load_data_mapping()
     eval_config = {
         "model": {
             checkpoint_name: {
@@ -111,8 +71,10 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
     }
 
     fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME", "POPE"]
-
-    eval_config["data"] = {k: v for k, v in data_mapping.items() if k in fast_subset}
+    lavender_subset = ["AI2D_TEST", "CCBench", "MMBench_DEV_EN", "MMBench_DEV_EN_V11", "MMStar", "SEEDBench_IMG", "ScienceQA_VAL"] # "MMMU_DEV_VAL", 
+    
+    subset_eval = lavender_subset
+    eval_config["data"] = {k: v for k, v in data_mapping.items() if k in subset_eval}
     config_path = checkpoint_dir / "eval_config.json"
     with open(config_path, "w") as f:
         json.dump(eval_config, f, indent=2)

@@ -1,0 +1,94 @@
+{
+  "MMVP": {
+    "class": "ImageMCQDataset",
+    "dataset": "MMVP"
+  },
+  "BLINK": {
+    "class": "ImageMCQDataset",
+    "dataset": "BLINK"
+  },
+  "VStarBench": {
+    "class": "ImageMCQDataset",
+    "dataset": "VStarBench"
+  },
+  "NaturalBenchDataset": {
+    "class": "ImageMCQDataset",
+    "dataset": "NaturalBenchDataset"
+  },
+  "VisOnlyQA-VLMEvalKit": {
+    "class": "ImageMCQDataset",
+    "dataset": "VisOnlyQA-VLMEvalKit"
+  },
+  "AI2D_TEST": {
+    "class": "ImageMCQDataset",
+    "dataset": "AI2D_TEST"
+  },
+  "CCBench": {
+    "class": "ImageMCQDataset",
+    "dataset": "CCBench"
+  },
+  "MMBench_DEV_EN": {
+    "class": "ImageMCQDataset",
+    "dataset": "MMBench_DEV_EN"
+  },
+  "MMBench_DEV_EN_V11": {
+    "class": "ImageMCQDataset",
+    "dataset": "MMBench_DEV_EN_V11"
+  },
+  "MMMU_DEV_VAL": {
+    "class": "ImageMCQDataset",
+    "dataset": "MMMU_DEV_VAL"
+  },
+  "MMStar": {
+    "class": "ImageMCQDataset",
+    "dataset": "MMStar"
+  },
+  "SEEDBench_IMG": {
+    "class": "ImageMCQDataset",
+    "dataset": "SEEDBench_IMG"
+  },
+  "ScienceQA_VAL": {
+    "class": "ImageMCQDataset",
+    "dataset": "ScienceQA_VAL"
+  },
+  "MME": {
+    "class": "ImageYORNDataset",
+    "dataset": "MME"
+  },
+  "HallusionBench": {
+    "class": "ImageYORNDataset",
+    "dataset": "HallusionBench"
+  },
+  "POPE": {
+    "class": "ImageYORNDataset",
+    "dataset": "POPE"
+  },
+  "AMBER": {
+    "class": "ImageYORNDataset",
+    "dataset": "AMBER"
+  },
+  "GQA_TestDev_Balanced": {
+    "class": "ImageVQADataset",
+    "dataset": "GQA_TestDev_Balanced"
+  },
+  "DocVQA_VAL": {
+    "class": "ImageVQADataset",
+    "dataset": "DocVQA_VAL"
+  },
+  "InfoVQA_VAL": {
+    "class": "ImageVQADataset",
+    "dataset": "InfoVQA_VAL"
+  },
+  "OCRBench": {
+    "class": "ImageVQADataset",
+    "dataset": "OCRBench"
+  },
+  "OCRVQA_TESTCORE": {
+    "class": "ImageVQADataset",
+    "dataset": "OCRVQA_TESTCORE"
+  },
+  "TextVQA_VAL": {
+    "class": "ImageVQADataset",
+    "dataset": "TextVQA_VAL"
+  }
+}

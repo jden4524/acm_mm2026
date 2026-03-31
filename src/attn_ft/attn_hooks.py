@@ -2,7 +2,7 @@ import torch
 from collections import defaultdict
 from attn_ft.data import AttnBatch
 from attn_ft.losses import soft_suppression_loss
-
+import transformers
 
 def extract_t2i_attn_valid(
     attn: torch.Tensor,
@@ -149,8 +149,13 @@ class AttnHookManager:
         self.remove_hooks()
         self.clear()  # Ensure no stale data
         self.selected_heads_map = selected_heads_map
-
-        layers = model.model.model.language_model.layers  # qwen3-vl specific path to transformer layers
+        # for qwen3-vl
+        if isinstance(model, transformers.Qwen3VLForConditionalGeneration):
+            layers = model.model.model.language_model.layers  # qwen3-vl specific path to transformer layers
+        elif isinstance(model, transformers.LlamaPreTrainedModel): # minicpm
+            layers = model.llm.model.layers  
+        else:
+            raise ValueError(f"Unsupported model type for AttnHookManager: {type(model)}")
         for i, layer in enumerate(layers):
             handle = layer.self_attn.register_forward_hook(self._hook_fn(i))
             self.hooks.append(handle)

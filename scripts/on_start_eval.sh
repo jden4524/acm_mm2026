@@ -4,4 +4,5 @@ cd attn_ft
 cd eval
 git clone https://github.com/hengzhan/VLMEvalKit.git
 cd VLMEvalKit
-uv pip install -e .
+uv venv .venv
+uv pip install --python .venv/bin/python -e .

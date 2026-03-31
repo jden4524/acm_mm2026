@@ -6,9 +6,11 @@ import torch
 from peft import LoraConfig, get_peft_model
 import sys
 import attn_ft.modeling_qwen3_vl
+import attn_ft.modeling_llama
 
 # swap the original module with the modified one
 sys.modules['transformers.models.qwen3_vl.modeling_qwen3_vl'] = attn_ft.modeling_qwen3_vl
+sys.modules['transformers.models.llama.modeling_llama'] = attn_ft.modeling_llama
 
 import transformers
 from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
@@ -24,26 +26,28 @@ def load_model_and_processor(
     lora_target_modules: list[str],
     lora_layer_ids: Optional[list[int]] = None,
 ) -> Tuple[torch.nn.Module, Any]:
-    quantization_config = None
-    min_pixels = 256 * 28 * 28
-    max_pixels = 1024 * 28 * 28
-    processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True,min_pixels=min_pixels, max_pixels=max_pixels)
+
     if "qwen3-vl" in model_name.lower():
         model = AutoModelForImageTextToText.from_pretrained(
             model_name,
             trust_remote_code=True,
             dtype=torch.bfloat16,
-            quantization_config=quantization_config,
             attn_implementation="eager",
         )
-    else:
+        min_pixels = 256 * 28 * 28
+        max_pixels = 1024 * 28 * 28
+        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True,min_pixels=min_pixels, max_pixels=max_pixels)
+
+    elif "minicpm" in model_name.lower():
         model = AutoModelForCausalLM.from_pretrained(
             model_name,
             trust_remote_code=True,
             dtype=torch.bfloat16,
-            quantization_config=quantization_config,
             attn_implementation="eager",
         )
+        processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
+    else:
+        raise ValueError(f"Unsupported model name: {model_name}")
 
     model.config.output_attentions = True
     model.config.return_dict = True

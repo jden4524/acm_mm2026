@@ -426,9 +426,8 @@ def train(config_path: str) -> None:
 
 upload_queue = queue.Queue()
 api = HfApi()
-REPO_ID = "Jackie2235/Qwen3-VL-8B-Instruct_attn_ft"
     
-def upload_worker():
+def upload_worker(repo):
     """Background worker that processes the upload queue one by one."""
     while True:
         # Get upload task (folder_path, step_number)
@@ -443,7 +442,7 @@ def upload_worker():
         try:
             api.upload_folder(
                 folder_path=folder_path,
-                repo_id=REPO_ID,
+                repo_id=repo,
                 commit_message=f"loss: {metadata['loss']}, run name: {metadata['message']}, Step {metadata['step']}",
                 repo_type="model"
             )
@@ -478,9 +477,15 @@ def main() -> None:
     args = parser.parse_args()
 
     is_main_process = int(os.environ.get("RANK", "0")) == 0
+    if "qwen" in args.config.lower():
+        REPO_ID = "Jackie2235/Qwen3-VL-8B-Instruct_attn_ft"
+    elif "minicpm" in args.config.lower():
+        REPO_ID = "Jackie2235/MiniCPM-attn_ft"
+    else:
+        raise ValueError(f"Cannot determine repo for config {args.config}")
     upload_thread = None
     if is_main_process:
-        upload_thread = threading.Thread(target=upload_worker, daemon=False)
+        upload_thread = threading.Thread(target=upload_worker, daemon=False, args=(REPO_ID,))
         upload_thread.start()
 
     train(args.config)

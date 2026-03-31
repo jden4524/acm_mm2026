@@ -1,0 +1,36 @@
+dataset:
+  hf_dataset_id: [Jackie2235/RLAIF-V-SEG, Jackie2235/flickr30k_attn_ft]
+
+model:
+  name: openbmb/MiniCPM-Llama3-V-2_5
+  lora_r: 16
+  lora_alpha: 16
+  lora_dropout: 0.1
+  lora_target_modules: [q_proj,v_proj]
+  attention_layers: 
+    -2: 0.4
+    -4: 0.2
+    -6: 0.2
+    -8: 0.2
+  attention_heads: []
+  guide_layers: midlate
+  attention_layer_decay: 0.1
+  grounding_head_calibration: true
+  calibration_batches: 50
+
+train:
+  run_name: MiniCPM-attn_ft_RLAIF_Flickr_lateQV
+  loss: suppress
+  loss_weight: 1
+  seed: 42
+  micro_batch_size: 8
+  effective_batch_size: 32
+  num_epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.1
+  warmup_steps: 100
+  log_every: 10
+  save_every: 1000
+  wandb_enabled: true
+  wandb_project: attn_ft
+  local_test: false
