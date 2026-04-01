@@ -52,7 +52,9 @@ def move_inputs_to_device(inputs: Any, device: torch.device) -> Any:
 
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
-    is_minicpm = "minicpm" in cfg.model.name.lower()
+    model_name_lower = cfg.model.name.lower()
+    is_minicpm = "minicpm" in model_name_lower
+    is_mllama = "llama-3.2" in model_name_lower and "vision" in model_name_lower
     guidance_enabled = cfg.train.loss_weight != 0
 
     layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
@@ -227,10 +229,12 @@ def train(config_path: str) -> None:
             accelerator.print("Running grounding head calibration forward pass...")
             model.eval()
             head_stats = {}
-            if "qwen" in config_path.lower():
-                num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
-            elif "minicpm" in config_path.lower():
+            if is_mllama:
+                num_model_layers = len(model_cfg.text_config.cross_attention_layers)
+            elif is_minicpm:
                 num_model_layers = len(accelerator.unwrap_model(model).llm.model.layers)
+            else:
+                num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
             scheduled_layer_ids, _ = build_layer_schedule(num_model_layers)
             scheduled_layer_id_set = set(scheduled_layer_ids)
             calibration_iter = iter(dataloader)

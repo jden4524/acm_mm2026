@@ -73,7 +73,7 @@ def write_eval_json(checkpoint_name, checkpoint_dir):
     fast_subset = ["HallusionBench", "MMVP", "VStarBench",  "VisOnlyQA-VLMEvalKit", "MME", "POPE"]
     lavender_subset = ["AI2D_TEST", "CCBench", "MMBench_DEV_EN", "MMBench_DEV_EN_V11", "MMStar", "SEEDBench_IMG", "ScienceQA_VAL"] # "MMMU_DEV_VAL", 
     
-    subset_eval = lavender_subset
+    subset_eval = fast_subset
     eval_config["data"] = {k: v for k, v in data_mapping.items() if k in subset_eval}
     config_path = checkpoint_dir / "eval_config.json"
     with open(config_path, "w") as f:

@@ -55,6 +55,18 @@ def load_model_and_processor(
         max_pixels = 1024 * 28 * 28
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True,min_pixels=min_pixels, max_pixels=max_pixels)
 
+    elif "llama-3.2" in model_name.lower() and "vision" in model_name.lower():
+        model = AutoModelForImageTextToText.from_pretrained(
+            model_name,
+            dtype=torch.bfloat16,
+            attn_implementation="eager",
+        )
+        processor = AutoProcessor.from_pretrained(model_name)
+        processor.image_processor.patch_size = model.config.vision_config.patch_size
+        processor.image_processor.num_patches = (
+            (model.config.vision_config.image_size // model.config.vision_config.patch_size) ** 2 + 1
+        )
+
     elif "minicpm" in model_name.lower():
         model = AutoModelForCausalLM.from_pretrained(
             model_name,

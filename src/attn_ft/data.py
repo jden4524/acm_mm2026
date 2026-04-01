@@ -12,6 +12,7 @@ from PIL import Image
 from torch.nn.utils.rnn import pad_sequence
 from torch.utils.data import Dataset
 from torchvision.transforms.functional import InterpolationMode, resize
+from transformers.models.mllama.image_processing_mllama import split_to_tiles
 
 from attn_ft.minicpm_ds import conversation_to_ids_llama3, conversation_to_ids_minicpm
 
@@ -54,6 +55,36 @@ def _assistant_content_start(context: torch.Tensor) -> Optional[int]:
     if assistant_positions.numel() == 0:
         return None
     return int(assistant_positions[0].item())
+
+
+def _find_token_subsequence(sequence: torch.Tensor, pattern: torch.Tensor) -> Optional[int]:
+    if pattern.numel() == 0 or sequence.numel() < pattern.numel():
+        return None
+
+    last_match: Optional[int] = None
+    seq_len = int(sequence.numel())
+    pat_len = int(pattern.numel())
+    for start in range(seq_len - pat_len + 1):
+        if torch.equal(sequence[start : start + pat_len], pattern):
+            last_match = start
+    return last_match
+
+
+def _build_labels_from_answer_suffix(
+    input_ids: torch.Tensor,
+    answer_ids: torch.Tensor,
+    pad_token_id: int,
+) -> Tuple[torch.Tensor, Optional[int]]:
+    labels = input_ids.clone()
+    labels[input_ids == pad_token_id] = -100
+
+    answer_start = _find_token_subsequence(input_ids, answer_ids)
+    if answer_start is None:
+        labels[:] = -100
+        return labels, None
+
+    labels[:answer_start] = -100
+    return labels, answer_start
 
 
 def _compute_image_bound(input_ids: torch.Tensor, tokenizer: Any) -> torch.Tensor:
@@ -123,6 +154,22 @@ def _build_minicpm_prompt(question: str, answer: str) -> List[Dict[str, str]]:
     return [
         {"role": "user", "content": f"{question}(<image>./</image>)\n"},
         {"role": "assistant", "content": answer},
+    ]
+
+
+def _build_mllama_prompt(question: str, answer: str) -> List[Dict[str, Any]]:
+    return [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image"},
+                {"type": "text", "text": question},
+            ],
+        },
+        {
+            "role": "assistant",
+            "content": [{"type": "text", "text": answer}],
+        },
     ]
 
 
@@ -204,6 +251,47 @@ def _build_minicpm_patch_masks(mask: Image.Image, image: Image.Image, image_proc
     return patch_masks
 
 
+def _build_mllama_vision_token_target(mask: Image.Image, image_processor: Any) -> torch.Tensor:
+    tile_height = int(image_processor.size["height"])
+    tile_width = int(image_processor.size["width"])
+    patch_size = int(getattr(image_processor, "patch_size", 14))
+    max_tiles = int(getattr(image_processor, "max_image_tiles", 1))
+    patches_h = tile_height // patch_size
+    patches_w = tile_width // patch_size
+    per_tile_tokens = patches_h * patches_w + 1
+
+    mask_array = np.array(mask.convert("L"), dtype=np.uint8)[None, :, :]
+    resized_mask, aspect_ratio = image_processor.resize(
+        image=mask_array,
+        size=image_processor.size,
+        max_image_tiles=max_tiles,
+        resample=Image.Resampling.NEAREST,
+        data_format="channels_first",
+        input_data_format="channels_first",
+    )
+    padded_mask = image_processor.pad(
+        image=resized_mask,
+        size=image_processor.size,
+        aspect_ratio=aspect_ratio,
+        data_format="channels_first",
+        input_data_format="channels_first",
+    )
+
+    num_tiles_height, num_tiles_width = aspect_ratio
+    tiled_mask = split_to_tiles(padded_mask, num_tiles_height, num_tiles_width)
+    tile_targets: List[torch.Tensor] = []
+
+    for tile_mask in tiled_mask:
+        tile_mask_img = Image.fromarray(tile_mask[0].astype(np.uint8), mode="L")
+        patch_mask = _resize_mask_to_grid(tile_mask_img, (patches_h, patches_w)).reshape(-1)
+        tile_targets.append(torch.cat([torch.zeros(1, dtype=torch.float32), patch_mask], dim=0))
+
+    while len(tile_targets) < max_tiles:
+        tile_targets.append(torch.zeros(per_tile_tokens, dtype=torch.float32))
+
+    return torch.cat(tile_targets, dim=0)
+
+
 def _pad_minicpm_examples(examples: List[Dict[str, Any]], pad_token_id: int) -> Dict[str, Any]:
     return {
         "input_ids": pad_sequence(
@@ -238,6 +326,7 @@ class AttnBatch:
     valid_supervision_indices: List[int]
     answers: List[str]
     vision_patch_masks: Optional[List[List[torch.Tensor]]] = None
+    vision_token_targets: Optional[List[torch.Tensor]] = None
     # image_stems: List[Optional[str]]
     labels: Optional[torch.Tensor] = None
 
@@ -254,6 +343,8 @@ class AttnSupervisionCollator:
     def __call__(self, batch: List[Dict[str, Any]]) -> AttnBatch:
         if "qwen" in self.model_name.lower():
             return self._collate_qwen(batch)
+        if "llama-3.2" in self.model_name.lower() and "vision" in self.model_name.lower():
+            return self._collate_mllama(batch)
         if "minicpm" in self.model_name.lower():
             return self._collate_minicpm(batch)
         raise ValueError(f"Unsupported model for collation: {self.model_name}")
@@ -433,5 +524,77 @@ class AttnSupervisionCollator:
             valid_supervision_indices=valid_supervision_indices,
             answers=answers,
             vision_patch_masks=vision_patch_masks,
+            labels=labels,
+        )
+
+    def _collate_mllama(self, batch: List[Dict[str, Any]]) -> AttnBatch:
+        tokenizer = self.processor.tokenizer
+        image_processor = self.processor.image_processor
+
+        answers = [str(sample["answer"]) for sample in batch]
+        questions = [str(sample["question"]) for sample in batch]
+        phrases_list = [str(sample["phrase"]) for sample in batch]
+        images = [sample["image"] for sample in batch]
+        masks_list = [sample["mask"] for sample in batch]
+
+        prompts = []
+        for question, answer in zip(questions, answers):
+            prompt = self.processor.apply_chat_template(
+                _build_mllama_prompt(question, answer),
+                add_generation_prompt=False,
+                tokenize=False,
+            )
+            prompts.append(prompt)
+
+        inputs = self.processor(text=prompts, images=images, return_tensors="pt", padding=True)
+        tokenized_answers = tokenizer(
+            answers,
+            return_offsets_mapping=True,
+            padding=True,
+            add_special_tokens=False,
+        )
+        offsets = tokenized_answers["offset_mapping"]
+
+        labels = inputs["input_ids"].clone()
+        labels[inputs["attention_mask"] == 0] = -100
+
+        masks: List[torch.Tensor] = []
+        token_spans: List[Optional[slice]] = []
+        image_token_indices: List[torch.Tensor] = []
+        valid_supervision_indices: List[int] = []
+        vision_token_targets: List[torch.Tensor] = []
+
+        for idx, (answer, phrase, mask_img) in enumerate(zip(answers, phrases_list, masks_list)):
+            answer_ids = tokenizer(answer, add_special_tokens=False, return_tensors="pt")["input_ids"][0]
+            sample_labels, answer_start = _build_labels_from_answer_suffix(
+                inputs["input_ids"][idx],
+                answer_ids,
+                tokenizer.pad_token_id,
+            )
+            labels[idx] = sample_labels
+
+            vision_target = _build_mllama_vision_token_target(mask_img, image_processor)
+            vision_token_targets.append(vision_target)
+            masks.append(vision_target)
+            image_token_indices.append(torch.empty(0, dtype=torch.long))
+
+            span = _find_phrase_span(answer, phrase)
+            token_span = _token_span_from_offsets(offsets[idx], span) if span is not None else None
+            if token_span is None or answer_start is None:
+                token_spans.append(None)
+                continue
+
+            token_spans.append(slice(answer_start + token_span[0], answer_start + token_span[1] + 1))
+            if vision_target.numel() > 0:
+                valid_supervision_indices.append(idx)
+
+        return AttnBatch(
+            inputs=inputs,
+            masks=masks,
+            token_spans=token_spans,
+            image_token_indices=image_token_indices,
+            valid_supervision_indices=valid_supervision_indices,
+            answers=answers,
+            vision_token_targets=vision_token_targets,
             labels=labels,
         )

@@ -56,12 +56,19 @@ def extract_t2i_attn_valid(
         if resampler_attn is None:
             raise ValueError("MiniCPM supervision requires resampler attention weights")
         targets = _build_minicpm_token_targets(batch, resampler_attn)
+    elif batch.vision_token_targets is not None:
+        targets = batch.vision_token_targets
     else:
         targets = batch.masks
 
     masks = []
     for batch_idx in batch.valid_supervision_indices:
         token_span = batch.token_spans[batch_idx]
+        if batch.vision_token_targets is not None:
+            extracted.append(attn[batch_idx][:, token_span, : targets[batch_idx].numel()])
+            masks.append(targets[batch_idx])
+            continue
+
         image_idx = batch.image_token_indices[batch_idx]
         extracted.append(attn[batch_idx][:, token_span, image_idx])
         masks.append(targets[batch_idx])
@@ -187,11 +194,18 @@ class AttnHookManager:
         """Internal hook to capture the second element of the layer output."""
 
         def hook(_module, _input, output):
-            if isinstance(output, tuple) and len(output) == 3 and output[2] is not None:
+            attn = None
+            if isinstance(output, tuple) and len(output) >= 3 and output[2] is not None:
                 attn = output[2]
-                if self.selected_heads_map is not None:
-                    attn = attn[:, self.selected_heads_map.get(layer_idx, []), :, :]
-                self.attentions[layer_idx] = attn
+            elif isinstance(output, tuple) and len(output) >= 2 and output[1] is not None:
+                attn = output[1]
+
+            if attn is None:
+                return
+
+            if self.selected_heads_map is not None:
+                attn = attn[:, self.selected_heads_map.get(layer_idx, []), :, :]
+            self.attentions[layer_idx] = attn
 
         return hook
 
@@ -221,6 +235,9 @@ class AttnHookManager:
             if candidate is not None and hasattr(candidate, "llm") and hasattr(candidate, "resampler"):
                 core_model = candidate
                 break
+            if candidate is not None and hasattr(candidate, "language_model") and hasattr(candidate, "vision_model"):
+                core_model = candidate
+                break
 
         if isinstance(core_model, transformers.Qwen3VLForConditionalGeneration):
             layers = core_model.model.language_model.layers
@@ -228,10 +245,16 @@ class AttnHookManager:
             layers = core_model.llm.model.layers
             handle = core_model.resampler.attn.register_forward_hook(self._resampler_hook_fn())
             self.hooks.append(handle)
+        elif hasattr(core_model, "language_model") and hasattr(core_model, "vision_model"):
+            layers = [
+                core_model.language_model.layers[layer_idx].cross_attn
+                for layer_idx in core_model.language_model.cross_attention_layers
+            ]
         else:
             raise ValueError(f"Unsupported model type for AttnHookManager: {type(model)}")
         for i, layer in enumerate(layers):
-            handle = layer.self_attn.register_forward_hook(self._hook_fn(i))
+            module = layer if hasattr(layer, "forward") and not hasattr(layer, "self_attn") else layer.self_attn
+            handle = module.register_forward_hook(self._hook_fn(i))
             self.hooks.append(handle)
 
         print(f"Attached {len(self.hooks)} hooks to model layers.")
