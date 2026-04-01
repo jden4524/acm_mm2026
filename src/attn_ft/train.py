@@ -53,6 +53,7 @@ def move_inputs_to_device(inputs: Any, device: torch.device) -> Any:
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
     is_minicpm = "minicpm" in cfg.model.name.lower()
+    guidance_enabled = cfg.train.loss_weight != 0
 
     layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
 
@@ -152,7 +153,8 @@ def train(config_path: str) -> None:
     )
 
     attn_manager = AttnHookManager()
-    attn_manager.attach(model)
+    if guidance_enabled:
+        attn_manager.attach(model)
 
     loaded_datasets = []
     for dataset_id in cfg.dataset.hf_dataset_id:
@@ -205,17 +207,20 @@ def train(config_path: str) -> None:
     if cfg.train.loss != "suppress":
         raise ValueError(f"Unsupported loss type: {cfg.train.loss}. This trainer only supports 'suppress'.")
     attn_align_loss = soft_suppression_loss
-    accelerator.print("Using soft suppression loss for attention alignment")
+    if guidance_enabled:
+        accelerator.print("Using soft suppression loss for attention alignment")
+    else:
+        accelerator.print("Attention guidance disabled because loss_weight=0")
 
     target_attn_layer = cfg.model.attention_layers
-    if cfg.model.guide_layers == "all":
+    if guidance_enabled and cfg.model.guide_layers == "all":
         accelerator.print(f"Using all attention layers with exponential decay={cfg.model.attention_layer_decay}")
-    elif cfg.model.guide_layers == "midlate":
+    elif guidance_enabled and cfg.model.guide_layers == "midlate":
         accelerator.print(f"Using mid-to-late attention layers with exponential decay={cfg.model.attention_layer_decay}")
     # else:
     #     accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
 
-    if cfg.model.grounding_head_calibration:
+    if guidance_enabled and cfg.model.grounding_head_calibration:
         if accelerator.num_processes > 1:
             accelerator.print("Skipping grounding head calibration: prototype path supports single-process only")
         else:
@@ -275,7 +280,9 @@ def train(config_path: str) -> None:
                 break
 
         local_tokens = sum((mb.labels[:, 1:] != -100).sum().item() for mb in micro_batches)
-        local_attn_units = sum(len(mb.valid_supervision_indices) for mb in micro_batches)
+        local_attn_units = 0 if not guidance_enabled else sum(
+            len(mb.valid_supervision_indices) for mb in micro_batches
+        )
 
         return micro_batches, local_tokens, local_attn_units
 
@@ -338,45 +345,46 @@ def train(config_path: str) -> None:
                         / global_tokens
                     )
 
-                    all_maps = attn_manager.get_attentions()
-                    resampler_attn = attn_manager.get_resampler_attention()
-                    layer_ids, layer_weights = build_layer_schedule(len(all_maps))
-                    
                     align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
-                    pred_chunks: list[list[torch.Tensor]] | None = None
-                    merged_masks: list[torch.Tensor] | None = None
-                    head_weight_chunks: list[torch.Tensor] = []
+                    if guidance_enabled:
+                        all_maps = attn_manager.get_attentions()
+                        resampler_attn = attn_manager.get_resampler_attention()
+                        layer_ids, layer_weights = build_layer_schedule(len(all_maps))
 
-                    for attn_layer, weight in zip(layer_ids, layer_weights):
-                        layer_attn = all_maps[attn_layer]
-                        if layer_attn.shape[1] == 0:
-                            continue
+                        pred_chunks: list[list[torch.Tensor]] | None = None
+                        merged_masks: list[torch.Tensor] | None = None
+                        head_weight_chunks: list[torch.Tensor] = []
 
-                        pred_list, mask_list = extract_t2i_attn_valid(layer_attn, batch, resampler_attn=resampler_attn)
-                        if not pred_list:
-                            continue
+                        for attn_layer, weight in zip(layer_ids, layer_weights):
+                            layer_attn = all_maps[attn_layer]
+                            if layer_attn.shape[1] == 0:
+                                continue
 
-                        heads_in_layer = pred_list[0].shape[0]
-                        if heads_in_layer == 0:
-                            continue
+                            pred_list, mask_list = extract_t2i_attn_valid(layer_attn, batch, resampler_attn=resampler_attn)
+                            if not pred_list:
+                                continue
 
-                        if pred_chunks is None:
-                            pred_chunks = [[] for _ in pred_list]
-                            merged_masks = mask_list
+                            heads_in_layer = pred_list[0].shape[0]
+                            if heads_in_layer == 0:
+                                continue
 
-                        for sample_idx, sample_pred in enumerate(pred_list):
-                            pred_chunks[sample_idx].append(sample_pred)
+                            if pred_chunks is None:
+                                pred_chunks = [[] for _ in pred_list]
+                                merged_masks = mask_list
 
-                        per_head_weight = weight / heads_in_layer
-                        head_weight_chunks.append(
-                            torch.full((heads_in_layer,), per_head_weight, device=accelerator.device, dtype=torch.float32)
-                        )
+                            for sample_idx, sample_pred in enumerate(pred_list):
+                                pred_chunks[sample_idx].append(sample_pred)
 
-                    if pred_chunks and merged_masks and head_weight_chunks:
-                        merged_preds = [torch.cat(chunks, dim=0) for chunks in pred_chunks]
-                        per_head_loss = attn_align_loss(merged_preds, merged_masks, per_head=True, temp=2)
-                        head_weights = torch.cat(head_weight_chunks).to(per_head_loss.dtype)
-                        align_loss_sum_all_l = (per_head_loss * head_weights.unsqueeze(0)).sum()
+                            per_head_weight = weight / heads_in_layer
+                            head_weight_chunks.append(
+                                torch.full((heads_in_layer,), per_head_weight, device=accelerator.device, dtype=torch.float32)
+                            )
+
+                        if pred_chunks and merged_masks and head_weight_chunks:
+                            merged_preds = [torch.cat(chunks, dim=0) for chunks in pred_chunks]
+                            per_head_loss = attn_align_loss(merged_preds, merged_masks, per_head=True, temp=2)
+                            head_weights = torch.cat(head_weight_chunks).to(per_head_loss.dtype)
+                            align_loss_sum_all_l = (per_head_loss * head_weights.unsqueeze(0)).sum()
                     
                     align_loss = (
                         align_loss_sum_all_l
@@ -390,7 +398,8 @@ def train(config_path: str) -> None:
 
                     loss = lm_loss + cfg.train.loss_weight * align_loss
 
-                    attn_manager.clear()
+                    if guidance_enabled:
+                        attn_manager.clear()
                     accelerator.backward(loss)
                     optimizer.step()
                     scheduler.step()
