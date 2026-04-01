@@ -10,6 +10,7 @@ from huggingface_hub import HfApi
 import shutil
 import threading
 import torch
+import torch.distributed as dist
 import torch.nn.functional as F
 from accelerate import Accelerator
 from torch.optim import AdamW
@@ -154,9 +155,25 @@ def train(config_path: str) -> None:
         lora_layer_ids=layer_ids,
     )
 
+    def get_calibration_layer_count(model_obj: torch.nn.Module) -> int:
+        candidates = [
+            model_obj,
+            getattr(model_obj, "base_model", None),
+            getattr(getattr(model_obj, "base_model", None), "model", None),
+        ]
+        core_model = next((candidate for candidate in candidates if candidate is not None), model_obj)
+
+        for candidate in candidates:
+            if candidate is not None and hasattr(candidate, "language_model") and hasattr(candidate, "vision_model"):
+                return len(candidate.language_model.cross_attention_layers)
+            if candidate is not None and hasattr(candidate, "llm") and hasattr(candidate, "resampler"):
+                return len(candidate.llm.model.layers)
+            if candidate is not None and hasattr(candidate, "model") and hasattr(candidate.model, "language_model"):
+                return len(candidate.model.language_model.layers)
+
+        raise ValueError(f"Unsupported model type for calibration: {type(core_model)}")
+
     attn_manager = AttnHookManager()
-    if guidance_enabled:
-        attn_manager.attach(model)
 
     loaded_datasets = []
     for dataset_id in cfg.dataset.hf_dataset_id:
@@ -183,6 +200,72 @@ def train(config_path: str) -> None:
         shuffle=True,
         collate_fn=collator,
     )
+
+    if guidance_enabled and cfg.model.grounding_head_calibration:
+        accelerator.print("Running grounding head calibration on the main process...")
+        grounding_heads: dict[int, list[int]] = {}
+        debug = {"num_candidates": 0, "selected": 0}
+
+        if accelerator.is_main_process:
+            model = model.to(accelerator.device)
+            attn_manager.attach(model)
+            model.eval()
+            head_stats = {}
+
+            num_model_layers = get_calibration_layer_count(model)
+
+            scheduled_layer_ids, _ = build_layer_schedule(num_model_layers)
+            scheduled_layer_id_set = set(scheduled_layer_ids)
+            calibration_iter = iter(dataloader)
+            for _ in range(cfg.model.calibration_batches):
+                try:
+                    batch = next(calibration_iter)
+                except StopIteration:
+                    break
+
+                batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
+                try:
+                    with torch.no_grad():
+                        if is_minicpm:
+                            _ = model(data=batch.inputs)
+                        else:
+                            _ = model(**batch.inputs)
+
+                    all_maps = attn_manager.get_attentions()
+                    resampler_attn = attn_manager.get_resampler_attention()
+                    for layer_idx, attn_logits in enumerate(all_maps):
+                        if layer_idx not in scheduled_layer_id_set:
+                            continue
+                        t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch, resampler_attn=resampler_attn)
+                        update_head_stats(head_stats, layer_idx, t2i_attn, valid_masks)
+                finally:
+                    attn_manager.clear()
+
+            grounding_heads, debug = select_grounding_heads(
+                head_stats,
+                allowed_layer_ids=scheduled_layer_ids,
+            )
+            model.train()
+
+        if accelerator.num_processes > 1 and dist.is_available() and dist.is_initialized():
+            broadcast_payload = [grounding_heads, debug]
+            dist.broadcast_object_list(broadcast_payload, src=0)
+            grounding_heads, debug = broadcast_payload
+        accelerator.wait_for_everyone()
+
+        accelerator.print(
+            f"Grounding head calibration done: selected={debug.get('selected', 0)} / {debug.get('num_candidates', 0)}"
+        )
+        if debug.get("num_candidates", 0) > 0:
+            accelerator.print(
+                f"Thresholds: mass>={debug['mass_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
+            )
+        accelerator.print("Selected grounding heads by layer:", grounding_heads)
+        if not grounding_heads:
+            accelerator.print("No grounding heads selected; using all heads for guidance.")
+        attn_manager.attach(model, selected_heads_map=grounding_heads)
+    elif guidance_enabled:
+        attn_manager.attach(model)
 
     trainable_dict = filter_trainable_parameters(model)
     trainable = list(trainable_dict.values())
@@ -221,61 +304,6 @@ def train(config_path: str) -> None:
         accelerator.print(f"Using mid-to-late attention layers with exponential decay={cfg.model.attention_layer_decay}")
     # else:
     #     accelerator.print("Using attention layer index", target_attn_layer, "for supervision")
-
-    if guidance_enabled and cfg.model.grounding_head_calibration:
-        if accelerator.num_processes > 1:
-            accelerator.print("Skipping grounding head calibration: prototype path supports single-process only")
-        else:
-            accelerator.print("Running grounding head calibration forward pass...")
-            model.eval()
-            head_stats = {}
-            if is_mllama:
-                num_model_layers = len(model_cfg.text_config.cross_attention_layers)
-            elif is_minicpm:
-                num_model_layers = len(accelerator.unwrap_model(model).llm.model.layers)
-            else:
-                num_model_layers = len(accelerator.unwrap_model(model).model.model.language_model.layers)
-            scheduled_layer_ids, _ = build_layer_schedule(num_model_layers)
-            scheduled_layer_id_set = set(scheduled_layer_ids)
-            calibration_iter = iter(dataloader)
-            for _ in range(cfg.model.calibration_batches):
-                batch = next(calibration_iter)
-
-                batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
-                try:
-                    with torch.no_grad():
-                        if is_minicpm:
-                            _ = model(data=batch.inputs)
-                        else:
-                            _ = model(**batch.inputs)
-
-                    all_maps = attn_manager.get_attentions()
-                    resampler_attn = attn_manager.get_resampler_attention()
-                    for layer_idx, attn_logits in enumerate(all_maps):
-                        if layer_idx not in scheduled_layer_id_set:
-                            continue
-                        t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch, resampler_attn=resampler_attn)
-                        update_head_stats(head_stats, layer_idx, t2i_attn, valid_masks)
-                        
-                finally:
-                    attn_manager.clear()
-
-            grounding_heads, debug = select_grounding_heads(
-                head_stats,
-                allowed_layer_ids=scheduled_layer_ids,
-            )
-            accelerator.print(
-                f"Grounding head calibration done: selected={debug.get('selected', 0)} / {debug.get('num_candidates', 0)}"
-            )
-            if debug.get("num_candidates", 0) > 0:
-                accelerator.print(
-                    f"Thresholds: mass>={debug['mass_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
-                )
-            accelerator.print("Selected grounding heads by layer:", grounding_heads)
-            if not grounding_heads:
-                accelerator.print("No grounding heads selected; using all heads for guidance.")
-            attn_manager.attach(model, selected_heads_map=grounding_heads)
-            model.train()
 
     def build_accum_window(data_iterator: Iterator):
         micro_batches = []

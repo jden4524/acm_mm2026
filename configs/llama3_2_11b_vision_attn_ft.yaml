@@ -6,7 +6,7 @@ model:
   lora_r: 16
   lora_alpha: 16
   lora_dropout: 0.1
-  lora_target_modules: [cross_attn.q_proj,cross_attn.k_proj,cross_attn.v_proj,cross_attn.o_proj]
+  lora_target_modules: [cross_attn.q_proj,cross_attn.k_proj]
   attention_layers:
     -2: 0.4
     -4: 0.2
@@ -23,8 +23,8 @@ train:
   loss: suppress
   loss_weight: 1
   seed: 42
-  micro_batch_size: 1
-  effective_batch_size: 8
+  micro_batch_size: 4
+  effective_batch_size: 32
   num_epochs: 1
   lr: 1.0e-4
   weight_decay: 0.1
