@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import inspect
 import math
 import json
 from pathlib import Path
 import queue
-from typing import Iterator
+from typing import Any, Iterator
 from huggingface_hub import HfApi
 import shutil
 import threading
@@ -18,8 +19,6 @@ from torch.utils.data import DataLoader
 from transformers import AutoConfig, get_cosine_with_hard_restarts_schedule_with_warmup
 from tqdm.auto import tqdm
 import os
-
-from transformers.convert_graph_to_onnx import args
 
 from attn_ft.attn_hooks import (
     AttnHookManager,
@@ -36,6 +35,29 @@ from attn_ft.models import (
 )
 
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
+
+
+def move_inputs_to_device(inputs: Any, device: torch.device) -> Any:
+    if hasattr(inputs, "to"):
+        return inputs.to(device)
+    if isinstance(inputs, dict):
+        return {key: move_inputs_to_device(value, device) for key, value in inputs.items()}
+    if isinstance(inputs, list):
+        return [move_inputs_to_device(value, device) for value in inputs]
+    if isinstance(inputs, tuple):
+        return tuple(move_inputs_to_device(value, device) for value in inputs)
+    if torch.is_tensor(inputs):
+        return inputs.to(device)
+    return inputs
+
+
+def model_forward(model: torch.nn.Module, inputs: Any) -> Any:
+    forward_params = inspect.signature(model.forward).parameters
+    if "data" in forward_params:
+        return model(inputs)
+    return model(**inputs)
+
+
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
 
@@ -156,7 +178,7 @@ def train(config_path: str) -> None:
         probabilities = [p / total for p in probabilities]
         dataset = interleave_datasets(loaded_datasets, probabilities=probabilities, stopping_strategy="first_exhausted")
 
-    collator = AttnSupervisionCollator(processor=processor)
+    collator = AttnSupervisionCollator(processor=processor, model_name=cfg.model.name)
 
     dataloader = DataLoader(
         dataset,
@@ -217,16 +239,17 @@ def train(config_path: str) -> None:
             for _ in range(cfg.model.calibration_batches):
                 batch = next(calibration_iter)
 
-                batch.inputs.to(accelerator.device)
+                batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
                 try:
                     with torch.no_grad():
-                        _ = model(**batch.inputs)
+                        _ = model_forward(model, batch.inputs)
 
                     all_maps = attn_manager.get_attentions()
+                    resampler_attn = attn_manager.get_resampler_attention()
                     for layer_idx, attn_logits in enumerate(all_maps):
                         if layer_idx not in scheduled_layer_id_set:
                             continue
-                        t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch)
+                        t2i_attn, valid_masks = extract_t2i_attn_valid(attn_logits, batch, resampler_attn=resampler_attn)
                         update_head_stats(head_stats, layer_idx, t2i_attn, valid_masks)
                         
                 finally:
@@ -292,10 +315,10 @@ def train(config_path: str) -> None:
             # Process each micro-batch with accumulate()
             for batch in micro_batches:
                 with accelerator.accumulate(model):
-                    batch.inputs.to(accelerator.device)
+                    batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
                     labels = batch.labels.to(accelerator.device)
 
-                    outputs = model(**batch.inputs)  # no labels; compute token loss manually
+                    outputs = model_forward(model, batch.inputs)  # no labels; compute token loss manually
                     logits = outputs.logits
 
                     shift_logits = logits[:, :-1, :].contiguous()
@@ -317,6 +340,7 @@ def train(config_path: str) -> None:
                     )
 
                     all_maps = attn_manager.get_attentions()
+                    resampler_attn = attn_manager.get_resampler_attention()
                     layer_ids, layer_weights = build_layer_schedule(len(all_maps))
                     
                     align_loss_sum_all_l = torch.tensor(0.0, device=accelerator.device)
@@ -329,7 +353,7 @@ def train(config_path: str) -> None:
                         if layer_attn.shape[1] == 0:
                             continue
 
-                        pred_list, mask_list = extract_t2i_attn_valid(layer_attn, batch)
+                        pred_list, mask_list = extract_t2i_attn_valid(layer_attn, batch, resampler_attn=resampler_attn)
                         if not pred_list:
                             continue
 

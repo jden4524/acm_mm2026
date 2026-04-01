@@ -4,17 +4,67 @@ from attn_ft.data import AttnBatch
 from attn_ft.losses import soft_suppression_loss
 import transformers
 
+
+def _build_minicpm_token_targets(
+    batch: AttnBatch,
+    resampler_attn: torch.Tensor,
+) -> list[torch.Tensor]:
+    token_targets: list[torch.Tensor] = []
+    visual_offset = 0
+
+    for sample_idx, image_inputs in enumerate(batch.inputs["pixel_values"]):
+        num_visual_inputs = len(image_inputs)
+        expected_tokens = batch.image_token_indices[sample_idx].numel()
+        sample_targets: list[torch.Tensor] = []
+
+        for local_idx in range(num_visual_inputs):
+            patch_mask = batch.vision_patch_masks[sample_idx][local_idx].to(
+                device=resampler_attn.device,
+                dtype=resampler_attn.dtype,
+            )
+            query_patch_attn = resampler_attn[visual_offset + local_idx, :, : patch_mask.numel()]
+            sample_targets.append(query_patch_attn @ patch_mask)
+
+        visual_offset += num_visual_inputs
+        if sample_targets:
+            token_target = torch.cat(sample_targets, dim=0)
+        else:
+            token_target = torch.empty(0, device=resampler_attn.device, dtype=resampler_attn.dtype)
+
+        if token_target.numel() > expected_tokens:
+            token_target = token_target[:expected_tokens]
+        elif token_target.numel() < expected_tokens:
+            token_target = torch.cat(
+                [
+                    token_target,
+                    torch.zeros(expected_tokens - token_target.numel(), device=token_target.device, dtype=token_target.dtype),
+                ],
+                dim=0,
+            )
+
+        token_targets.append(token_target)
+
+    return token_targets
+
 def extract_t2i_attn_valid(
     attn: torch.Tensor,
     batch: AttnBatch,
+    resampler_attn: torch.Tensor | None = None,
 ) -> tuple[list[torch.Tensor], list[torch.Tensor]]:
     extracted = []
+    if batch.vision_patch_masks is not None:
+        if resampler_attn is None:
+            raise ValueError("MiniCPM supervision requires resampler attention weights")
+        targets = _build_minicpm_token_targets(batch, resampler_attn)
+    else:
+        targets = batch.masks
+
     masks = []
     for batch_idx in batch.valid_supervision_indices:
         token_span = batch.token_spans[batch_idx]
         image_idx = batch.image_token_indices[batch_idx]
         extracted.append(attn[batch_idx][:, token_span, image_idx])
-        masks.append(batch.masks[batch_idx])
+        masks.append(targets[batch_idx])
     return extracted, masks
 
 
@@ -129,6 +179,7 @@ def select_grounding_heads(head_stats, allowed_layer_ids: list[int] | None = Non
 class AttnHookManager:
     def __init__(self):
         self.attentions = {}
+        self.resampler_attentions = []
         self.hooks = []
         self.selected_heads_map = None
 
@@ -144,16 +195,39 @@ class AttnHookManager:
 
         return hook
 
+    def _resampler_hook_fn(self):
+        def hook(_module, _input, output):
+            if isinstance(output, tuple) and len(output) > 1 and output[1] is not None:
+                self.resampler_attentions.append(output[1].detach())
+
+        return hook
+
     def attach(self, model: torch.nn.Module, selected_heads_map=None):
         """Registers hooks to all layers in the Qwen language model backbone."""
         self.remove_hooks()
         self.clear()  # Ensure no stale data
         self.selected_heads_map = selected_heads_map
-        # for qwen3-vl
-        if isinstance(model.base_model.model, transformers.Qwen3VLForConditionalGeneration):
-            layers = model.model.model.language_model.layers  # qwen3-vl specific path to transformer layers
-        elif isinstance(model.base_model.model, transformers.LlamaPreTrainedModel): # minicpm
-            layers = model.llm.model.layers  
+        candidates = [
+            model,
+            getattr(model, "base_model", None),
+            getattr(getattr(model, "base_model", None), "model", None),
+        ]
+        core_model = next((candidate for candidate in candidates if candidate is not None), model)
+
+        for candidate in candidates:
+            if isinstance(candidate, transformers.Qwen3VLForConditionalGeneration):
+                core_model = candidate
+                break
+            if candidate is not None and hasattr(candidate, "llm") and hasattr(candidate, "resampler"):
+                core_model = candidate
+                break
+
+        if isinstance(core_model, transformers.Qwen3VLForConditionalGeneration):
+            layers = core_model.model.language_model.layers
+        elif hasattr(core_model, "llm") and hasattr(core_model, "resampler"):
+            layers = core_model.llm.model.layers
+            handle = core_model.resampler.attn.register_forward_hook(self._resampler_hook_fn())
+            self.hooks.append(handle)
         else:
             raise ValueError(f"Unsupported model type for AttnHookManager: {type(model)}")
         for i, layer in enumerate(layers):
@@ -166,9 +240,17 @@ class AttnHookManager:
         """Returns a list of attention tensors ordered by layer index."""
         return [self.attentions[i] for i in sorted(self.attentions.keys())]
 
+    def get_resampler_attention(self) -> torch.Tensor | None:
+        if not self.resampler_attentions:
+            return None
+        if len(self.resampler_attentions) == 1:
+            return self.resampler_attentions[0]
+        return torch.cat(self.resampler_attentions, dim=0)
+
     def clear(self):
         """Clears stored attention tensors."""
         self.attentions.clear()
+        self.resampler_attentions.clear()
 
     def remove_hooks(self):
         for hook in self.hooks:
