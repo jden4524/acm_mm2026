@@ -258,7 +258,6 @@ def _build_mllama_vision_token_target(mask: Image.Image, image_processor: Any) -
     max_tiles = int(getattr(image_processor, "max_image_tiles", 1))
     patches_h = tile_height // patch_size
     patches_w = tile_width // patch_size
-    per_tile_tokens = patches_h * patches_w + 1
 
     mask_array = np.array(mask.convert("L"), dtype=np.uint8)[None, :, :]
     resized_mask, aspect_ratio = image_processor.resize(
@@ -285,9 +284,6 @@ def _build_mllama_vision_token_target(mask: Image.Image, image_processor: Any) -
         tile_mask_img = Image.fromarray(tile_mask[0].astype(np.uint8), mode="L")
         patch_mask = _resize_mask_to_grid(tile_mask_img, (patches_h, patches_w)).reshape(-1)
         tile_targets.append(torch.cat([torch.zeros(1, dtype=torch.float32), patch_mask], dim=0))
-
-    while len(tile_targets) < max_tiles:
-        tile_targets.append(torch.zeros(per_tile_tokens, dtype=torch.float32))
 
     return torch.cat(tile_targets, dim=0)
 

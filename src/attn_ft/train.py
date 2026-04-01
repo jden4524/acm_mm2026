@@ -272,6 +272,8 @@ def train(config_path: str) -> None:
                     f"Thresholds: mass>={debug['mass_thresh']:.6f} alignment<={debug['alignment_thresh']:.6f}"
                 )
             accelerator.print("Selected grounding heads by layer:", grounding_heads)
+            if not grounding_heads:
+                accelerator.print("No grounding heads selected; using all heads for guidance.")
             attn_manager.attach(model, selected_heads_map=grounding_heads)
             model.train()
 

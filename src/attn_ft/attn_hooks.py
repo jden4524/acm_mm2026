@@ -89,13 +89,7 @@ def update_head_stats(head_stats, layer_idx, t2i_attn, label):
         }
 
     t2i_attn_fp32 = [attn.float() for attn in t2i_attn]
-    mass_per_head_list = []
-    for attn in t2i_attn_fp32:
-        finite_mask = torch.isfinite(attn)
-        safe_attn = torch.where(finite_mask, attn, torch.zeros_like(attn))
-        finite_count = finite_mask.sum(dim=(-1, -2)).clamp_min(1).to(attn.dtype)
-        mass_per_head_list.append(safe_attn.sum(dim=(-1, -2)) / finite_count)
-    mass_per_head = torch.stack(mass_per_head_list)
+    mass_per_head = torch.stack([attn.mean(dim=(-1, -2)) for attn in t2i_attn_fp32])
     alignment_score_per_head = soft_suppression_loss(t2i_attn_fp32, label, per_head=True, temp=5)
 
     head_stats[layer_idx]["mass_sum"] += mass_per_head.mean(dim=0)
@@ -228,7 +222,7 @@ class AttnHookManager:
         """Registers hooks to all layers in the Qwen language model backbone."""
         self.remove_hooks()
         self.clear()  # Ensure no stale data
-        self.selected_heads_map = selected_heads_map
+        self.selected_heads_map = selected_heads_map or None
         candidates = [
             model,
             getattr(model, "base_model", None),
