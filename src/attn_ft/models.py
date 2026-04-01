@@ -7,12 +7,13 @@ from peft import LoraConfig, get_peft_model
 import sys
 import attn_ft.modeling_qwen3_vl
 import attn_ft.modeling_llama
+import attn_ft.modeling_mllama
 
 # swap the original module with the modified one
 sys.modules['transformers.models.qwen3_vl.modeling_qwen3_vl'] = attn_ft.modeling_qwen3_vl
 sys.modules['transformers.models.llama.modeling_llama'] = attn_ft.modeling_llama
+sys.modules['transformers.models.mllama.modeling_mllama'] = attn_ft.modeling_mllama
 
-import transformers
 from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, AutoProcessor, BitsAndBytesConfig
 
 from attn_ft.attn_hooks import AttnHookManager
