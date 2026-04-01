@@ -19,9 +19,9 @@ model:
   calibration_batches: 50
 
 train:
-  run_name: Qwen3-VL-8B_headsel_RLAIF_Flickr_midlateKQ
+  run_name: Qwen3-VL-8B_headsel_RLAIF_Flickr_lmOnly
   loss: suppress
-  loss_weight: 1
+  loss_weight: 0
   seed: 42
   micro_batch_size: 4
   effective_batch_size: 32
