@@ -18,6 +18,23 @@ from transformers import AutoModelForCausalLM, AutoModelForImageTextToText, Auto
 from attn_ft.attn_hooks import AttnHookManager
 
 
+def _patch_minicpm_forward(model: torch.nn.Module) -> None:
+    model_cls = type(model)
+    if getattr(model_cls, "_attn_ft_forward_patched", False):
+        return
+
+    original_forward = model_cls.forward
+
+    def patched_forward(self, data, **kwargs):
+        kwargs.pop("input_ids", None)
+        kwargs.pop("inputs_embeds", None)
+        kwargs.pop("position_ids", None)
+        return original_forward(self, data, **kwargs)
+
+    model_cls.forward = patched_forward
+    model_cls._attn_ft_forward_patched = True
+
+
 def load_model_and_processor(
     model_name: str,
     lora_r: int,
@@ -45,6 +62,7 @@ def load_model_and_processor(
             dtype=torch.bfloat16,
             attn_implementation="eager",
         )
+        _patch_minicpm_forward(model)
         processor = AutoProcessor.from_pretrained(model_name, trust_remote_code=True)
         processor.tokenizer.chat_template = "{% set loop_messages = messages %}{% for message in loop_messages %}{% set content = '<|start_header_id|>' + message['role'] + '<|end_header_id|>\n\n'+ message['content'] | trim + '<|eot_id|>' %}{% if loop.index0 == 0 %}{% set content = bos_token + content %}{% endif %}{{ content }}{% endfor %}"
     else:
