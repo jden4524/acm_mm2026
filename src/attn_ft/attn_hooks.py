@@ -89,7 +89,13 @@ def update_head_stats(head_stats, layer_idx, t2i_attn, label):
         }
 
     t2i_attn_fp32 = [attn.float() for attn in t2i_attn]
-    mass_per_head = torch.stack([attn.sum(dim=(-1, -2)) for attn in t2i_attn_fp32])
+    mass_per_head_list = []
+    for attn in t2i_attn_fp32:
+        finite_mask = torch.isfinite(attn)
+        safe_attn = torch.where(finite_mask, attn, torch.zeros_like(attn))
+        finite_count = finite_mask.sum(dim=(-1, -2)).clamp_min(1).to(attn.dtype)
+        mass_per_head_list.append(safe_attn.sum(dim=(-1, -2)) / finite_count)
+    mass_per_head = torch.stack(mass_per_head_list)
     alignment_score_per_head = soft_suppression_loss(t2i_attn_fp32, label, per_head=True, temp=5)
 
     head_stats[layer_idx]["mass_sum"] += mass_per_head.mean(dim=0)
@@ -154,6 +160,7 @@ def select_grounding_heads(head_stats, allowed_layer_ids: list[int] | None = Non
                 stats["alignment_score"] / stats["count"].clamp_min(1),
             )
         )
+        if torch.isfinite(mass) and torch.isfinite(alignment)
     ]
 
     if not candidates:
