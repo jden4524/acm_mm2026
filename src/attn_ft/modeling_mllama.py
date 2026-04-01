@@ -77,32 +77,17 @@ def _patched_cross_attention_forward(
             "Cross attention layer can't find neither `cross_attn_states` nor cached values for key/values!"
         )
 
-    attn_impl = getattr(self.config, "_attn_implementation", None) or "eager"
-    if attn_impl != "eager":
-        attention_interface = _upstream.ALL_ATTENTION_FUNCTIONS[attn_impl]
-        attn_output, attn_weights = attention_interface(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=0.0 if not self.training else self.dropout,
-            scaling=self.scaling,
-            **kwargs,
-        )
-        attn_weights_raw = None
-    else:
-        attn_output, attn_weights, attn_weights_raw = eager_attention_forward(
-            self,
-            query_states,
-            key_states,
-            value_states,
-            attention_mask,
-            dropout=0.0 if not self.training else self.dropout,
-            scaling=self.scaling,
-            return_raw_attn_weights=True,
-            **kwargs,
-        )
+    attn_output, attn_weights, attn_weights_raw = eager_attention_forward(
+        self,
+        query_states,
+        key_states,
+        value_states,
+        attention_mask,
+        dropout=0.0 if not self.training else self.dropout,
+        scaling=self.scaling,
+        return_raw_attn_weights=True,
+        **kwargs,
+    )
 
     attn_output = attn_output.reshape(bsz, q_len, -1).contiguous()
     attn_output = self.o_proj(attn_output)

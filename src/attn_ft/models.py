@@ -60,7 +60,7 @@ def load_model_and_processor(
         model = AutoModelForImageTextToText.from_pretrained(
             model_name,
             dtype=torch.bfloat16,
-            attn_implementation="eager",
+            attn_implementation="sdpa",
         )
         processor = AutoProcessor.from_pretrained(model_name)
         processor.image_processor.patch_size = model.config.vision_config.patch_size
@@ -81,7 +81,7 @@ def load_model_and_processor(
     else:
         raise ValueError(f"Unsupported model name: {model_name}")
 
-    model.config.output_attentions = True
+    model.config.output_attentions = "llama-3.2" not in model_name.lower()
     model.config.return_dict = True
 
     if lora_target_modules:
