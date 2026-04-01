@@ -546,7 +546,7 @@ class AttnSupervisionCollator:
             )
             prompts.append(prompt)
 
-        inputs = self.processor(text=prompts, images=images, return_tensors="pt", padding=True)
+        inputs = self.processor(text=prompts, images=[[image] for image in images], return_tensors="pt", padding=True)
         tokenized_answers = tokenizer(
             answers,
             return_offsets_mapping=True,

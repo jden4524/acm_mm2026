@@ -13,7 +13,7 @@ model:
     -6: 0.2
     -8: 0.2
   attention_heads: []
-  guide_layers: midlate
+  guide_layers: all
   attention_layer_decay: 0.1
   grounding_head_calibration: true
   calibration_batches: 50
