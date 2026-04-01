@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import argparse
-import inspect
 import math
 import json
 from pathlib import Path
@@ -51,15 +50,9 @@ def move_inputs_to_device(inputs: Any, device: torch.device) -> Any:
     return inputs
 
 
-def model_forward(model: torch.nn.Module, inputs: Any) -> Any:
-    forward_params = inspect.signature(model.forward).parameters
-    if "data" in forward_params:
-        return model(inputs)
-    return model(**inputs)
-
-
 def train(config_path: str) -> None:
     cfg = load_config(config_path)
+    is_minicpm = "minicpm" in cfg.model.name.lower()
 
     layer_schedule_cache: dict[int, tuple[list[int], list[float]]] = {}
 
@@ -242,7 +235,10 @@ def train(config_path: str) -> None:
                 batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
                 try:
                     with torch.no_grad():
-                        _ = model_forward(model, batch.inputs)
+                        if is_minicpm:
+                            _ = model(data=batch.inputs)
+                        else:
+                            _ = model(**batch.inputs)
 
                     all_maps = attn_manager.get_attentions()
                     resampler_attn = attn_manager.get_resampler_attention()
@@ -318,7 +314,10 @@ def train(config_path: str) -> None:
                     batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
                     labels = batch.labels.to(accelerator.device)
 
-                    outputs = model_forward(model, batch.inputs)  # no labels; compute token loss manually
+                    if is_minicpm:
+                        outputs = model(data=batch.inputs)
+                    else:
+                        outputs = model(**batch.inputs)
                     logits = outputs.logits
 
                     shift_logits = logits[:, :-1, :].contiguous()
