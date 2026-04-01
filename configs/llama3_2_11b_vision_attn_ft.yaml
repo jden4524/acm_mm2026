@@ -16,7 +16,7 @@ model:
   guide_layers: all
   attention_layer_decay: 0.1
   grounding_head_calibration: true
-  calibration_batches: 50
+  calibration_batches: 100
 
 train:
   run_name: llama3_2_11b_vision_attn_ft
@@ -24,13 +24,13 @@ train:
   loss_weight: 1
   seed: 42
   micro_batch_size: 2
-  effective_batch_size: 16
+  effective_batch_size: 32
   num_epochs: 1
   lr: 1.0e-4
   weight_decay: 0.1
   warmup_steps: 100
   log_every: 10
-  save_every: 1000
+  save_every: 500
   wandb_enabled: true
   wandb_project: attn_ft
   local_test: false
