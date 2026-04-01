@@ -67,6 +67,19 @@ def log_checkpoint(checkpoint_name,
 
     return metrics_to_log
 
+
+def get_step0_checkpoint_name(checkpoint_name: str) -> str:
+    checkpoint_name_lower = checkpoint_name.lower()
+
+    if "llama" in checkpoint_name_lower and "11b" in checkpoint_name_lower:
+        return "Llama-3.2-11B-Vision-Instruct"
+    if "2b" in checkpoint_name_lower:
+        return "Qwen3-VL-2B-Instruct"
+    if "8b" in checkpoint_name_lower:
+        return "Qwen3-VL-8B-Instruct"
+
+    raise ValueError(f"Cannot determine base checkpoint for {checkpoint_name}")
+
 def log_eval_results(checkpoint_name,
                      run_name=None, 
                      results_root: Path=Path(__file__).resolve().parent / "eval_results", 
@@ -97,13 +110,7 @@ def log_eval_results(checkpoint_name,
     
     if first_run:
         print(f"Created new wandb run, logging step 0 checkpoint for reference")
-        if "2B" in checkpoint_name:
-            step0_checkpoint_name = "Qwen3-VL-2B-Instruct"
-        elif "8B" in checkpoint_name:
-            step0_checkpoint_name = "Qwen3-VL-8B-Instruct"
-        else:
-            raise ValueError(f"Cannot determine base checkpoint for {checkpoint_name}")
-        
+        step0_checkpoint_name = get_step0_checkpoint_name(checkpoint_name)
         metrics_step0 = log_checkpoint(step0_checkpoint_name, results_root)
         wandb.log(metrics_step0, step=0)
 
