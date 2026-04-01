@@ -518,12 +518,16 @@ def main() -> None:
     args = parser.parse_args()
 
     is_main_process = int(os.environ.get("RANK", "0")) == 0
-    if "qwen" in args.config.lower():
+    cfg = load_config(args.config)
+    model_name_lower = cfg.model.name.lower()
+    if "qwen" in model_name_lower:
         REPO_ID = "Jackie2235/Qwen3-VL-8B-Instruct_attn_ft"
-    elif "minicpm" in args.config.lower():
+    elif "minicpm" in model_name_lower:
         REPO_ID = "Jackie2235/MiniCPM-attn_ft"
+    elif "llama-3.2" in model_name_lower and "vision" in model_name_lower:
+        REPO_ID = "Jackie2235/Llama-3.2-11B-Vision-Instruct_attn_ft"
     else:
-        raise ValueError(f"Cannot determine repo for config {args.config}")
+        raise ValueError(f"Cannot determine repo for model {cfg.model.name} from config {args.config}")
     upload_thread = None
     if is_main_process:
         upload_thread = threading.Thread(target=upload_worker, daemon=False, args=(REPO_ID,))
