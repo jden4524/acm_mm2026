@@ -325,7 +325,9 @@ def train(config_path: str) -> None:
         num_training_steps=total_training_steps,
         num_cycles=2
     )
-    scheduler = accelerator.prepare(scheduler)
+    # Keep the scheduler unwrapped: total_training_steps is already based on the
+    # per-rank dataloader length after Accelerator.prepare(). Wrapping the
+    # scheduler would advance it extra times in multi-GPU runs.
     
     if cfg.train.loss != "suppress":
         raise ValueError(f"Unsupported loss type: {cfg.train.loss}. This trainer only supports 'suppress'.")
@@ -474,7 +476,8 @@ def train(config_path: str) -> None:
                         attn_manager.clear()
                     accelerator.backward(loss)
                     optimizer.step()
-                    scheduler.step()
+                    if accelerator.sync_gradients:
+                        scheduler.step()
                     optimizer.zero_grad(set_to_none=True)
 
                 if accelerator.sync_gradients:
