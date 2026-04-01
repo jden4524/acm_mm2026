@@ -37,17 +37,42 @@ from attn_ft.models import (
 os.environ["PYTORCH_ALLOC_CONF"] = "expandable_segments:True"
 
 
-def move_inputs_to_device(inputs: Any, device: torch.device) -> Any:
+def _read_env_int(name: str) -> int | None:
+    raw_value = os.environ.get(name)
+    if raw_value is None:
+        return None
+    try:
+        return int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"Environment variable {name} must be an integer, got {raw_value!r}") from exc
+
+
+def _resolve_dataloader_workers(world_size: int, local_test: bool) -> int:
+    override = _read_env_int("ATTN_FT_NUM_WORKERS")
+    if override is not None:
+        return max(0, override)
+    if local_test:
+        return 0
+
+    cpu_count = os.cpu_count() or 1
+    workers_per_rank = max(1, cpu_count // max(1, world_size))
+    return min(8, workers_per_rank)
+
+
+def move_inputs_to_device(inputs: Any, device: torch.device, non_blocking: bool = False) -> Any:
     if hasattr(inputs, "to"):
-        return inputs.to(device)
+        try:
+            return inputs.to(device, non_blocking=non_blocking)
+        except TypeError:
+            return inputs.to(device)
     if isinstance(inputs, dict):
-        return {key: move_inputs_to_device(value, device) for key, value in inputs.items()}
+        return {key: move_inputs_to_device(value, device, non_blocking=non_blocking) for key, value in inputs.items()}
     if isinstance(inputs, list):
-        return [move_inputs_to_device(value, device) for value in inputs]
+        return [move_inputs_to_device(value, device, non_blocking=non_blocking) for value in inputs]
     if isinstance(inputs, tuple):
-        return tuple(move_inputs_to_device(value, device) for value in inputs)
+        return tuple(move_inputs_to_device(value, device, non_blocking=non_blocking) for value in inputs)
     if torch.is_tensor(inputs):
-        return inputs.to(device)
+        return inputs.to(device, non_blocking=non_blocking)
     return inputs
 
 
@@ -194,11 +219,24 @@ def train(config_path: str) -> None:
 
     collator = AttnSupervisionCollator(processor=processor, model_name=cfg.model.name)
 
-    dataloader = DataLoader(
-        dataset,
-        batch_size=cfg.train.micro_batch_size,
-        shuffle=True,
-        collate_fn=collator,
+    dataloader_num_workers = _resolve_dataloader_workers(NUM_GPUS, cfg.train.local_test)
+    dataloader_pin_memory = accelerator.device.type == "cuda"
+    dataloader_kwargs = {
+        "batch_size": cfg.train.micro_batch_size,
+        "shuffle": True,
+        "collate_fn": collator,
+        "num_workers": dataloader_num_workers,
+        "pin_memory": dataloader_pin_memory,
+    }
+    if dataloader_num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = max(1, _read_env_int("ATTN_FT_PREFETCH_FACTOR") or 2)
+
+    dataloader = DataLoader(dataset, **dataloader_kwargs)
+    accelerator.print(
+        "DataLoader config: "
+        f"num_workers={dataloader_num_workers}, pin_memory={dataloader_pin_memory}, "
+        f"persistent_workers={dataloader_kwargs.get('persistent_workers', False)}"
     )
 
     if guidance_enabled and cfg.model.grounding_head_calibration:
@@ -223,7 +261,7 @@ def train(config_path: str) -> None:
                 except StopIteration:
                     break
 
-                batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
+                batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device, non_blocking=dataloader_pin_memory)
                 try:
                     with torch.no_grad():
                         if is_minicpm:
@@ -352,8 +390,8 @@ def train(config_path: str) -> None:
             # Process each micro-batch with accumulate()
             for batch in micro_batches:
                 with accelerator.accumulate(model):
-                    batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device)
-                    labels = batch.labels.to(accelerator.device)
+                    batch.inputs = move_inputs_to_device(batch.inputs, accelerator.device, non_blocking=dataloader_pin_memory)
+                    labels = batch.labels.to(accelerator.device, non_blocking=dataloader_pin_memory)
 
                     if is_minicpm:
                         outputs = model(data=batch.inputs)
