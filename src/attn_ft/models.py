@@ -85,16 +85,19 @@ def load_model_and_processor(
     model.config.return_dict = True
 
     if lora_target_modules:
-        lora_config = LoraConfig(
-            r=lora_r,
-            lora_alpha=lora_alpha,
-            lora_dropout=lora_dropout,
-            target_modules=lora_target_modules,
-            layers_to_transform=lora_layer_ids,
-            layers_pattern=r"(?:language_model|model)\.layers",
-            bias="none",
-            task_type="CAUSAL_LM",
-        )
+        lora_kwargs = {
+            "r": lora_r,
+            "lora_alpha": lora_alpha,
+            "lora_dropout": lora_dropout,
+            "target_modules": lora_target_modules,
+            "bias": "none",
+            "task_type": "CAUSAL_LM",
+        }
+        if lora_layer_ids is not None:
+            lora_kwargs["layers_to_transform"] = lora_layer_ids
+            lora_kwargs["layers_pattern"] = r"(?:language_model|model)\.layers"
+
+        lora_config = LoraConfig(**lora_kwargs)
         model = get_peft_model(model, lora_config)
 
     return model, processor
