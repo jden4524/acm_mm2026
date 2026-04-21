@@ -1,0 +1,71 @@
+# Copy this file to a new config and customize it for your run.
+# Example:
+#   cp configs/config_template.yaml configs/my_run.yaml
+
+dataset:
+  # One dataset id or a list of dataset ids to interleave by dataset size.
+  hf_dataset_id:
+    - Jackie2235/flickr30k_attn_ft
+  split: train
+  # Parsed by the config loader for compatibility.
+  # The current training pipeline expects dataset columns:
+  # `image`, `mask`, `phrase`, and either `answer` or `caption`.
+  # If `question` is missing, it defaults to "Describe the image."
+  caption_field: caption
+  image_field: image
+  mask_root: ""
+  max_samples: null
+
+model:
+  # Common choices:
+  # - Qwen/Qwen3-VL-8B-Instruct
+  # - Qwen/Qwen3-VL-2B-Instruct
+  # - meta-llama/Llama-3.2-11B-Vision-Instruct
+  # - openbmb/MiniCPM-Llama3-V-2_5
+  name: Qwen/Qwen3-VL-8B-Instruct
+  lora_r: 16
+  lora_alpha: 16
+  lora_dropout: 0.1
+  # Match these to the model family:
+  # Qwen: [q_proj, v_proj] or [k_proj, q_proj]
+  # Llama-3.2-Vision: [cross_attn.q_proj, cross_attn.k_proj]
+  # MiniCPM: [q_proj, v_proj]
+  lora_target_modules:
+    - q_proj
+    - v_proj
+  # Negative indices count backward from the last guided layer.
+  attention_layers:
+    -2: 0.4
+    -4: 0.2
+    -6: 0.2
+    -8: 0.2
+  # Leave empty to auto-select grounding heads during calibration.
+  attention_heads: []
+  # Supported values: all, midlate, earlymid
+  guide_layers: midlate
+  attention_layer_decay: 0.1
+  grounding_head_calibration: true
+  calibration_batches: 50
+
+train:
+  run_name: example_attn_ft_run
+  # The current trainer supports only `suppress`.
+  loss: suppress
+  # Set to 0 to disable attention guidance and keep LM loss only.
+  loss_weight: 1.0
+  seed: 42
+  micro_batch_size: 4
+  # Must be >= micro_batch_size * WORLD_SIZE.
+  effective_batch_size: 32
+  num_epochs: 1
+  lr: 1.0e-4
+  weight_decay: 0.1
+  warmup_steps: 100
+  log_every: 10
+  save_every: 1000
+  wandb_enabled: true
+  wandb_project: attn_ft
+  wandb_entity: null
+  wandb_run_name: null
+  # When true, the loader overrides batch sizes/calibration for smoke tests.
+  local_test: false
