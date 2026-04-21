@@ -1,6 +1,6 @@
-# Attention Mask Finetuning
+# Mind What Matters for Reasoning: Aligning Cross-Modal Attention via Probability Mass Concentration
 
-This project fine-tunes selected attention heads in a VLM using segmentation masks aligned to caption phrases.
+This project tunes selected attention heads in a VLM using segmentation masks to improve baseline models' general reasoning abilities.
 
 ## Quickstart
 
